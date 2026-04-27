@@ -207,6 +207,29 @@ sudo systemctl reload caddy
 
 ---
 
+## 🔄 Обновление
+
+Когда в репозитории появляется новая версия, обновите установку на сервере:
+
+```bash
+cd /opt/remnawave-monitor
+sudo systemctl stop remnawave-monitor
+sudo git pull origin main
+sudo npm install --omit=dev
+sudo systemctl start remnawave-monitor
+```
+
+> **Примечание:** файлы `.env` и `data/` (база данных) не хранятся в репозитории и не будут затронуты при обновлении. Все ваши настройки и данные сохранятся.
+
+Если вы хотите проверить, что обновление прошло успешно:
+
+```bash
+sudo systemctl status remnawave-monitor
+sudo journalctl -u remnawave-monitor -n 30 --no-pager
+```
+
+---
+
 ## ⚙️ Конфигурация
 
 Все настройки задаются через переменные окружения в `.env`:
