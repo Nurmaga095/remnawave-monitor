@@ -1698,7 +1698,7 @@ function sessionCardHtml(u) {
       <div class="sc-badges">
         <div class="sc-badge ${ipDetails.length >= 5 ? 'sc-badge-warn' : ''}"><b>${ipDetails.length}</b> IP</div>
         <div class="sc-badge ${hwidOver ? 'sc-badge-danger' : ''}"><b>${hwid}</b>/${hwidLimit}</div>
-        ${riskScore > 0 ? `<div class="sc-badge ${riskScore >= 50 ? 'sc-badge-danger' : riskScore >= 20 ? 'sc-badge-warn' : ''}"><b>${riskScore}</b>⚡</div>` : ''}
+        ${riskScore > 0 ? `<div class="sc-badge ${riskScore >= 40 ? 'sc-badge-danger' : riskScore >= 20 ? 'sc-badge-warn' : ''}"><b>${riskScore}</b>⚡</div>` : ''}
       </div>
     </div>
     ${ipDetails.length > 0 ? `<div class="sc-ips">${topIps}${moreCount}</div>` : ''}
@@ -1970,8 +1970,8 @@ function renderAuditLog(entries) {
     const date = new Date(e.ts);
     const dateStr = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
     const timeStr = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    const levelCls = e.riskLevel === 'critical' ? 'audit-red' : e.riskLevel === 'warning' ? 'audit-yellow' : 'audit-green';
-    const levelIcon = e.riskLevel === 'critical' ? '🔴' : e.riskLevel === 'warning' ? '🟡' : '🟢';
+    const levelCls = e.riskLevel === 'critical' ? 'audit-red' : e.riskLevel === 'high' ? 'audit-orange' : e.riskLevel === 'warning' ? 'audit-yellow' : 'audit-green';
+    const levelIcon = e.riskLevel === 'critical' ? '🔴' : e.riskLevel === 'high' ? '🟠' : e.riskLevel === 'warning' ? '🟡' : '🟢';
     return `<div class="inv-audit-row">
       <span class="inv-audit-time">${dateStr} ${timeStr}</span>
       <span class="inv-audit-level ${levelCls}">${levelIcon} ${esc(e.riskLevel)}</span>
@@ -2132,6 +2132,7 @@ function userCardHtml(u) {
   const riskScore = serverResult ? (serverResult.riskScore || 0) : leakRisk.score;
   const riskLevel = serverResult ? (serverResult.riskLevel || 'clean') : leakRisk.level;
   const riskColor = riskLevel === 'critical' ? 'var(--red)'
+    : riskLevel === 'high' ? '#f97316'
     : riskLevel === 'warning' ? 'var(--yellow)'
     : 'var(--green)';
 

@@ -881,6 +881,7 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 .inv-audit-time { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); min-width: 85px; }
 .inv-audit-level { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
 .audit-red { background: rgba(239,68,68,0.1); color: #fca5a5; }
+.audit-orange { background: rgba(249,115,22,0.1); color: #fdba74; }
 .audit-yellow { background: rgba(245,158,11,0.1); color: #fcd34d; }
 .audit-green { background: rgba(16,185,129,0.1); color: #6ee7b7; }
 .inv-audit-score { font-weight: 700; font-family: 'JetBrains Mono', monospace; margin-left: auto; color: var(--text); }

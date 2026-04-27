@@ -157,11 +157,16 @@ function createRuleEngine(db) {
           isProxy: hasProxy,
           isTor: hasTor,
           riskScore: suspect ? (suspect.riskScore || 0) : 0,
+          riskLevel: suspect ? (suspect.riskLevel || 'clean') : 'clean',
           status: String(user.status || '').toUpperCase(),
           trafficBytes: Number(user.usedTrafficBytes || user.usedTraffic || 0),
           trafficGB: Number(user.usedTrafficBytes || user.usedTraffic || 0) / (1024 * 1024 * 1024),
           hwidChurn: hwidChurn[key] || 0,
           isSuspect: !!suspect,
+          signalCount: suspect ? (suspect.signals || []).length : 0,
+          hasMultiCity: suspect ? (suspect.signals || []).some(s => s.id.startsWith('multi_city')) : false,
+          hasImpossibleTravel: suspect ? (suspect.signals || []).some(s => s.id === 'impossible_travel') : false,
+          hasVelocityAbuse: suspect ? (suspect.signals || []).some(s => s.id.startsWith('velocity_')) : false,
           daysActive: user.createdAt ? Math.floor((now - new Date(user.createdAt).getTime()) / (24 * 60 * 60 * 1000)) : 0,
         };
 
