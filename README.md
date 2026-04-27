@@ -5,16 +5,16 @@
 <h1 align="center">Remnawave Monitor</h1>
 
 <p align="center">
-  <strong>Self-hosted monitoring dashboard for <a href="https://github.com/remnawave/backend">Remnawave</a> VPN panel</strong>
+  <strong>Self-hosted панель мониторинга для VPN-панели <a href="https://github.com/remnawave/backend">Remnawave</a></strong>
 </p>
 
 <p align="center">
-  <a href="#-features">Features</a> •
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-deployment">Deployment</a> •
-  <a href="#-configuration">Configuration</a> •
-  <a href="#-detection-engine">Detection Engine</a> •
-  <a href="#-license">License</a>
+  <a href="#-возможности">Возможности</a> •
+  <a href="#-быстрый-старт">Быстрый старт</a> •
+  <a href="#-деплой-на-vps">Деплой</a> •
+  <a href="#-конфигурация">Конфигурация</a> •
+  <a href="#-движок-детекции">Детекция</a> •
+  <a href="#-лицензия">Лицензия</a>
 </p>
 
 <p align="center">
@@ -26,73 +26,73 @@
 
 ---
 
-## 📋 Overview
+## 📋 Обзор
 
-**Remnawave Monitor** is a lightweight, self-hosted web dashboard that connects to your [Remnawave](https://github.com/remnawave/backend) VPN panel and provides:
+**Remnawave Monitor** — лёгкая self-hosted веб-панель, которая подключается к вашей [Remnawave](https://github.com/remnawave/backend) VPN-панели и предоставляет:
 
-- **Real-time connection monitoring** — see who's online, from where, and on which devices
-- **Abuse detection** — automatically identifies credential sharing via HWID analysis
-- **Incident management** — track, warn, and resolve suspicious users
-- **Connection map** — visualize active connections on a world map
+- **Мониторинг подключений в реальном времени** — кто онлайн, откуда, с каких устройств
+- **Детекция злоупотреблений** — автоматическое обнаружение раздачи подписки через анализ HWID
+- **Управление инцидентами** — отслеживание, предупреждение и блокировка нарушителей
+- **Карта подключений** — визуализация активных сессий на карте мира
 
-No external frameworks required. Pure Node.js + vanilla JavaScript. Single dependency: `better-sqlite3`.
-
----
-
-## ✨ Features
-
-### 🖥 Dashboard
-- Live user count, active sessions, HWID devices, and suspect overview
-- Country breakdown with real-time statistics
-- Interactive connection map powered by [Leaflet](https://leafletjs.com/)
-- Sliding time windows: Live / 5min / 15min / 30min
-
-### 👥 Active Sessions
-- Full list of currently connected users with IP and geolocation data
-- Filters: multi-IP, multi-HWID, by country
-- Sortable and searchable
-
-### 🔍 Detection Engine
-- **HWID-first approach** — hardware IDs are the only deterministic signal
-- Multi-layered risk scoring with 3 signal categories (Deterministic / Strong / Indirect)
-- Automatic incident creation when anomalies are detected
-- Zero false positives on mobile users (CGNAT-aware)
-
-### 🚨 Incident Management
-- Status workflow: `New → Reviewing → Warned → Resolved / Banned`
-- Operator notes and audit trail
-- Auto-reopen on recurring detection
-- Telegram warnings to users
-
-### 🔗 Relation Graph
-- IP / ASN / HWID cluster analysis
-- Multi-account detection via shared devices
-- 30-minute rolling window
-
-### ⚙️ Rule Engine
-- Custom detection rules with configurable thresholds
-- Automatic Telegram notifications on trigger
-- Per-rule cooldowns and enable/disable
-
-### 🎨 UI/UX
-- Dark theme with glassmorphism design
-- Light theme support
-- Responsive layout (mobile-friendly)
-- Real-time auto-refresh with countdown
+Без внешних фреймворков. Чистый Node.js + vanilla JavaScript. Единственная зависимость: `better-sqlite3`.
 
 ---
 
-## 🚀 Quick Start
+## ✨ Возможности
 
-### Prerequisites
+### 🖥 Дашборд
+- Общая статистика: пользователи, активные сессии, HWID-устройства, подозрительные
+- Разбивка по странам с live-статистикой
+- Интерактивная карта подключений на [Leaflet](https://leafletjs.com/)
+- Переключаемые временные окна: Сейчас / 5 мин / 15 мин / 30 мин
+
+### 👥 Активные сессии
+- Полный список подключённых пользователей с IP и геолокацией
+- Фильтры: много IP, много HWID, по стране
+- Сортировка и поиск
+
+### 🔍 Движок детекции
+- **HWID-first подход** — аппаратный ID является единственным детерминистическим сигналом
+- Многоуровневая оценка риска: 3 категории сигналов (Детерминистические / Сильные / Косвенные)
+- Автоматическое создание инцидентов при обнаружении аномалий
+- Нулевые ложные срабатывания для мобильных пользователей (учёт CGNAT)
+
+### 🚨 Управление инцидентами
+- Статус-машина: `Новый → В работе → Предупреждён → Закрыт / Забанен`
+- Заметки оператора и журнал действий
+- Автоматическое переоткрытие при повторной детекции
+- Отправка предупреждений через Telegram
+
+### 🔗 Граф связей
+- Анализ кластеров: IP / ASN / HWID
+- Обнаружение мультиаккаунтов через общие устройства
+- Скользящее окно 30 минут
+
+### ⚙️ Движок правил
+- Настраиваемые правила детекции с порогами
+- Автоматические Telegram-уведомления при срабатывании
+- Кулдауны и включение/отключение для каждого правила
+
+### 🎨 Интерфейс
+- Тёмная тема с эффектом glassmorphism
+- Поддержка светлой темы
+- Адаптивная вёрстка (мобильные устройства)
+- Автообновление данных с обратным отсчётом
+
+---
+
+## 🚀 Быстрый старт
+
+### Требования
 
 - **Node.js** ≥ 18.0.0
-- **Remnawave** panel instance with API access
-- *(Optional)* Build tools for `better-sqlite3` compilation: `build-essential`, `python3`
+- Работающая панель **Remnawave** с доступом к API
+- *(Опционально)* Инструменты сборки для компиляции `better-sqlite3`: `build-essential`, `python3`
 
-### Automated Installation (recommended)
+### Автоматическая установка (рекомендуется)
 
-The interactive installer will guide you through the entire setup:
+Интерактивный установщик проведёт вас через весь процесс:
 
 ```bash
 git clone https://github.com/Nurmaga095/remnawave-monitor.git
@@ -101,18 +101,18 @@ sudo chmod +x setup.sh
 sudo ./setup.sh
 ```
 
-The installer will:
-- ✅ Check and install Node.js if needed
-- ✅ Install build tools for `better-sqlite3`
-- ✅ Ask for all required settings (credentials, Remnawave URL, API token)
-- ✅ Generate a secure session secret
-- ✅ Create `.env` with proper permissions
-- ✅ Install npm dependencies
-- ✅ Create a system user
-- ✅ Set up systemd service (auto-start on boot)
-- ✅ Optionally configure Caddy reverse proxy with HTTPS
+Установщик выполнит:
+- ✅ Проверку и установку Node.js при необходимости
+- ✅ Установку инструментов сборки для `better-sqlite3`
+- ✅ Запрос всех необходимых настроек (логин, пароль, URL панели, API-токен)
+- ✅ Генерацию безопасного секрета сессии
+- ✅ Создание `.env` с правильными правами доступа
+- ✅ Установку npm-зависимостей
+- ✅ Создание системного пользователя
+- ✅ Настройку systemd-сервиса (автозапуск при загрузке)
+- ✅ Опциональную настройку Caddy reverse proxy с HTTPS
 
-### Manual Installation
+### Ручная установка
 
 ```bash
 git clone https://github.com/Nurmaga095/remnawave-monitor.git
@@ -121,70 +121,70 @@ cp .env.example .env
 npm install --omit=dev
 ```
 
-### Configuration
+### Настройка
 
-Edit `.env` with your settings:
+Отредактируйте `.env`:
 
 ```env
-# Dashboard credentials
+# Учётные данные для входа в панель
 APP_USERNAME=admin
-APP_PASSWORD=your-secure-password
-SESSION_SECRET=replace-with-at-least-32-random-characters
+APP_PASSWORD=ваш-надёжный-пароль
+SESSION_SECRET=замените-на-минимум-32-случайных-символа
 
-# Remnawave connection
+# Подключение к Remnawave
 REMNAWAVE_BASE_URL=https://your-panel.example.com
-REMNAWAVE_API_TOKEN=your-remnawave-api-token
+REMNAWAVE_API_TOKEN=ваш-api-токен-remnawave
 
-# Optional: Telegram warnings
-TELEGRAM_BOT_TOKEN=your-bot-token
+# Опционально: Telegram-предупреждения
+TELEGRAM_BOT_TOKEN=токен-вашего-бота
 ```
 
-### Run
+### Запуск
 
 ```bash
 npm start
 ```
 
-Open `http://127.0.0.1:8787` and log in with your credentials.
+Откройте `http://127.0.0.1:8787` и войдите с вашими учётными данными.
 
 ---
 
-## 🌐 Deployment
+## 🌐 Деплой на VPS
 
-### Ubuntu / Debian VPS
+### Ubuntu / Debian
 
-#### 1. Install dependencies
+#### 1. Установка зависимостей
 
 ```bash
 # Node.js 20+
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 
-# Build tools (for better-sqlite3)
+# Инструменты сборки (для better-sqlite3)
 sudo apt install -y build-essential python3 make g++
 
 # Caddy (reverse proxy)
 sudo apt install -y caddy
 ```
 
-#### 2. Deploy the application
+#### 2. Деплой приложения
 
 ```bash
 sudo git clone https://github.com/Nurmaga095/remnawave-monitor.git /opt/remnawave-monitor
 cd /opt/remnawave-monitor
 sudo cp .env.example .env
-sudo nano .env  # fill in your values
+sudo nano .env  # заполните ваши значения
 sudo npm install --omit=dev
 ```
 
-#### 3. Create a system user
+#### 3. Создание системного пользователя
 
 ```bash
 sudo useradd --system --home /opt/remnawave-monitor --shell /usr/sbin/nologin remnawave
 sudo chown -R remnawave:remnawave /opt/remnawave-monitor
 ```
 
-#### 4. Install systemd service
+#### 4. Установка systemd-сервиса
 
 ```bash
 sudo cp /opt/remnawave-monitor/remnawave-monitor.service.example \
@@ -193,158 +193,158 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now remnawave-monitor
 ```
 
-#### 5. Configure Caddy
+#### 5. Настройка Caddy
 
 ```bash
 sudo cp /opt/remnawave-monitor/Caddyfile.example /etc/caddy/Caddyfile
-sudo nano /etc/caddy/Caddyfile  # replace your-domain.example
+sudo nano /etc/caddy/Caddyfile  # замените your-domain.example на ваш домен
 sudo systemctl reload caddy
 ```
 
-#### 6. Firewall
+#### 6. Файрвол
 
-Only expose ports `22`, `80`, `443`. Port `8787` should **not** be open externally — Caddy proxies it over HTTPS.
+Откройте только порты `22`, `80`, `443`. Порт `8787` **не** должен быть открыт наружу — Caddy проксирует его через HTTPS.
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Конфигурация
 
-All settings are configured via environment variables in `.env`:
+Все настройки задаются через переменные окружения в `.env`:
 
-### Core
+### Основные
 
-| Variable | Description | Default |
+| Переменная | Описание | По умолчанию |
 |---|---|---|
-| `PORT` | HTTP listen port | `8787` |
-| `APP_USERNAME` | Dashboard login | — |
-| `APP_PASSWORD` | Dashboard password | — |
-| `SESSION_SECRET` | HMAC secret (≥32 chars) | — |
-| `REMNAWAVE_BASE_URL` | Remnawave panel URL | — |
-| `REMNAWAVE_API_TOKEN` | Remnawave API token | — |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token for warnings | — |
+| `PORT` | HTTP-порт | `8787` |
+| `APP_USERNAME` | Логин для входа | — |
+| `APP_PASSWORD` | Пароль для входа | — |
+| `SESSION_SECRET` | HMAC-секрет (≥32 символа) | — |
+| `REMNAWAVE_BASE_URL` | URL панели Remnawave | — |
+| `REMNAWAVE_API_TOKEN` | API-токен Remnawave | — |
+| `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота для предупреждений | — |
 
-### Sync & Storage
+### Синхронизация и хранение
 
-| Variable | Description | Default |
+| Переменная | Описание | По умолчанию |
 |---|---|---|
-| `DB_PATH` | SQLite database path | `./data/remnawave-monitor.sqlite` |
-| `SYNC_INTERVAL_SECONDS` | Sync cycle interval | `60` |
-| `IP_HISTORY_RETENTION_HOURS` | IP snapshot retention | `24` |
-| `SYNC_LOG_RETENTION_DAYS` | Sync log retention | `7` |
+| `DB_PATH` | Путь к базе данных SQLite | `./data/remnawave-monitor.sqlite` |
+| `SYNC_INTERVAL_SECONDS` | Интервал цикла синхронизации | `60` |
+| `IP_HISTORY_RETENTION_HOURS` | Хранение IP-снапшотов | `24` |
+| `SYNC_LOG_RETENTION_DAYS` | Хранение логов синхронизации | `7` |
 
 ### HWID
 
-| Variable | Description | Default |
+| Переменная | Описание | По умолчанию |
 |---|---|---|
-| `HWID_DETAILS_LIMIT` | Max users for HWID details fetch | `150` |
-| `HWID_DETAILS_CONCURRENCY` | Parallel HWID requests | `8` |
+| `HWID_DETAILS_LIMIT` | Макс. пользователей для загрузки HWID-деталей | `150` |
+| `HWID_DETAILS_CONCURRENCY` | Параллельные HWID-запросы | `8` |
 
-### IP Geolocation
+### Геолокация IP
 
-| Variable | Description | Default |
+| Переменная | Описание | По умолчанию |
 |---|---|---|
-| `IP_GEO_ENABLED` | Enable IP geolocation caching | `true` |
-| `IP_GEO_CACHE_TTL_DAYS` | Geo cache TTL | `7` |
-| `IP_GEO_SYNC_LIMIT` | Max new IPs per sync for geo enrichment | `200` |
-| `IP_GEO_CONCURRENCY` | Parallel geo requests | `4` |
+| `IP_GEO_ENABLED` | Включить кэширование геолокации | `true` |
+| `IP_GEO_CACHE_TTL_DAYS` | TTL кэша геолокации | `7` |
+| `IP_GEO_SYNC_LIMIT` | Макс. новых IP за синхронизацию | `200` |
+| `IP_GEO_CONCURRENCY` | Параллельные geo-запросы | `4` |
 
 ---
 
-## 🔍 Detection Engine
+## 🔍 Движок детекции
 
-The detection engine analyzes user behavior using a **device-first** approach. HWID (Hardware ID) is the only deterministic signal for identifying abuse.
+Движок анализирует поведение пользователей с подходом **device-first**. HWID (аппаратный идентификатор) — единственный детерминистический сигнал для обнаружения злоупотреблений.
 
-### Signal Categories
+### Категории сигналов
 
-| Category | Description | Can trigger action? |
+| Категория | Описание | Может вызвать действие? |
 |---|---|---|
-| **DETERMINISTIC** | Objective facts (HWID > limit) | ✅ Auto-escalation |
-| **STRONG** | High correlation (HWID churn, 24/7 activity, IP excess) | ✅ In combination |
-| **INDIRECT** | Context only (country diversity, traffic) | ❌ Never alone |
+| **ДЕТЕРМИНИСТИЧЕСКИЕ** | Объективные факты (HWID > лимит) | ✅ Авто-эскалация |
+| **СИЛЬНЫЕ** | Высокая корреляция (ротация HWID, активность 24/7, избыток IP) | ✅ В комбинации |
+| **КОСВЕННЫЕ** | Только контекст (разнообразие стран, трафик) | ❌ Никогда самостоятельно |
 
-### Risk Levels
+### Уровни риска
 
-| Score | Level | Description |
+| Баллы | Уровень | Описание |
 |---|---|---|
-| 80+ | 🔴 Critical | HWID over limit or strong signal combo |
-| 60–79 | 🟠 High Risk | Deterministic or strong signals |
-| 40–59 | 🟡 Suspicious | Strong signals required |
-| 20–39 | 🔵 Notice | Any signal |
-| <20 | ⚪ Clean | No issues |
+| 80+ | 🔴 Критический | HWID сверх лимита или комбинация сильных сигналов |
+| 60–79 | 🟠 Высокий риск | Детерминистические или сильные сигналы |
+| 40–59 | 🟡 Подозрительный | Требуются сильные сигналы |
+| 20–39 | 🔵 Внимание | Любой сигнал |
+| <20 | ⚪ Чисто | Нет проблем |
 
-### CGNAT Awareness
+### Учёт CGNAT
 
-The engine is specifically designed to **avoid false positives** from mobile users behind CGNAT. IP-based signals alone can never trigger a detection — they only provide context for operator review.
+Движок специально спроектирован для **исключения ложных срабатываний** на мобильных пользователях за CGNAT. IP-сигналы сами по себе никогда не могут вызвать детекцию — они предоставляют только контекст для оператора.
 
 ---
 
-## 🏗 Architecture
+## 🏗 Архитектура
 
 ```
 remnawave-monitor/
 ├── src/
-│   ├── server.js            # HTTP server, routing, auth, proxy
-│   ├── remnawave-sync.js    # Background sync with Remnawave API
+│   ├── server.js            # HTTP-сервер, роутинг, авторизация, прокси
+│   ├── remnawave-sync.js    # Фоновая синхронизация с Remnawave API
 │   ├── sync-store.js        # SQLite data layer
-│   ├── detect.js            # Detection engine
-│   ├── rules.js             # Rule engine
-│   └── ip-check.js          # IP analysis utilities
+│   ├── detect.js            # Движок детекции
+│   ├── rules.js             # Движок правил
+│   └── ip-check.js          # Утилиты анализа IP
 ├── public/
-│   ├── index.html           # SPA shell
-│   ├── js/app.js            # Frontend application
-│   └── css/style.css        # Styles (dark/light theme)
-├── setup.sh                 # Interactive installer
-├── .env.example             # Configuration template
-├── Caddyfile.example        # Caddy reverse proxy config
+│   ├── index.html           # SPA-оболочка
+│   ├── js/app.js            # Фронтенд-приложение
+│   └── css/style.css        # Стили (тёмная/светлая тема)
+├── setup.sh                 # Интерактивный установщик
+├── .env.example             # Шаблон конфигурации
+├── Caddyfile.example        # Конфиг Caddy reverse proxy
 └── remnawave-monitor.service.example  # systemd unit
 ```
 
-### How it works
+### Как это работает
 
-1. **Sync Loop** — The server periodically fetches users, active IPs, and HWID data from Remnawave API
-2. **Geo Enrichment** — IP addresses are enriched with country/ASN/network type via [ipwho.is](https://ipwho.is)
-3. **Detection** — Each sync cycle runs the detection engine to identify anomalies
-4. **Incidents** — Detected anomalies automatically create/update incidents
-5. **Dashboard** — The SPA frontend reads cached state from the local API
+1. **Цикл синхронизации** — сервер периодически забирает данные о пользователях, активных IP и HWID из Remnawave API
+2. **Гео-обогащение** — IP-адреса обогащаются данными о стране/ASN/типе сети через [ipwho.is](https://ipwho.is)
+3. **Детекция** — после каждого цикла запускается движок детекции для обнаружения аномалий
+4. **Инциденты** — обнаруженные аномалии автоматически создают/обновляют инциденты
+5. **Дашборд** — SPA-фронтенд читает кэшированные данные через локальный API
 
-### Security
+### Безопасность
 
-- API token is stored server-side only — the browser never receives it
-- Authentication via username/password with `HttpOnly` session cookie
-- Server listens on `127.0.0.1` by default — use a reverse proxy (Caddy/Nginx) for HTTPS
-- `/proxy` endpoint only forwards to the configured Remnawave instance
-
----
-
-## 📦 Tech Stack
-
-- **Runtime**: Node.js (no frameworks, pure `http` module)
-- **Database**: SQLite via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3)
-- **Frontend**: Vanilla JavaScript SPA
-- **Maps**: [Leaflet](https://leafletjs.com/)
-- **Fonts**: [Inter](https://rsms.me/inter/), [JetBrains Mono](https://www.jetbrains.com/lp/mono/)
-- **Reverse Proxy**: [Caddy](https://caddyserver.com/) (recommended)
+- API-токен хранится только на сервере — браузер его никогда не получает
+- Авторизация через логин/пароль с `HttpOnly` cookie сессии
+- Сервер слушает `127.0.0.1` по умолчанию — используйте reverse proxy (Caddy/Nginx) для HTTPS
+- Эндпоинт `/proxy` перенаправляет запросы только на настроенный инстанс Remnawave
 
 ---
 
-## 🤝 Contributing
+## 📦 Технологии
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
+- **Среда выполнения**: Node.js (без фреймворков, чистый модуль `http`)
+- **База данных**: SQLite через [better-sqlite3](https://github.com/WiseLibs/better-sqlite3)
+- **Фронтенд**: Vanilla JavaScript SPA
+- **Карты**: [Leaflet](https://leafletjs.com/)
+- **Шрифты**: [Inter](https://rsms.me/inter/), [JetBrains Mono](https://www.jetbrains.com/lp/mono/)
+- **Reverse Proxy**: [Caddy](https://caddyserver.com/) (рекомендуется)
 
 ---
 
-## 📄 License
+## 🤝 Участие в разработке
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+Мы приветствуем вклад в проект! Вы можете отправить Pull Request.
+
+1. Сделайте форк репозитория
+2. Создайте ветку для фичи: `git checkout -b feature/amazing-feature`
+3. Зафиксируйте изменения: `git commit -m 'Добавить крутую фичу'`
+4. Отправьте ветку: `git push origin feature/amazing-feature`
+5. Откройте Pull Request
+
+---
+
+## 📄 Лицензия
+
+Проект распространяется под лицензией MIT — подробности в файле [LICENSE](LICENSE).
 
 ---
 
 <p align="center">
-  Made with ❤️ for the Remnawave community
+  Создано с ❤️ для сообщества Remnawave
 </p>

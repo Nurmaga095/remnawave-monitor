@@ -1,7 +1,7 @@
 {
   "name": "remnawave-monitor",
   "version": "1.0.0",
-  "description": "Self-hosted monitoring dashboard for Remnawave VPN panel. Real-time connection tracking, HWID-based abuse detection, incident management, and interactive connection map.",
+  "description": "Self-hosted панель мониторинга для VPN-панели Remnawave. Мониторинг подключений, детекция злоупотреблений по HWID, управление инцидентами, карта подключений.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
