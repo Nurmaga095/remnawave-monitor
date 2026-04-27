@@ -248,41 +248,71 @@ function createDetector(options = {}) {
   }
 
   // ─── #3 Fingerprint Cluster Detection ───────────────────────
+  // Matches by unique HWID hash — NOT device model (too many false positives)
   function detectFingerprintCluster(u, state, keys) {
-    const userDevices = [];
+    // Collect this user's unique HWID hashes
+    const userHwids = new Set();
     for (const key of keys) {
       const devices = (state.hwidDevices || {})[key];
       if (Array.isArray(devices)) {
         for (const d of devices) {
-          if (d && (d.deviceModel || d.model || d.hwid)) {
-            userDevices.push(String(d.deviceModel || d.model || d.hwid || '').toLowerCase());
-          }
+          // Use HWID hash (unique per device), NOT model name
+          const hwid = d && (d.hwid || d.deviceKey || d.key || '');
+          if (hwid && hwid.length >= 8) userHwids.add(hwid.toLowerCase());
         }
       }
     }
-    if (userDevices.length === 0) return null;
-    // Check other users for same device models
-    let linkedCount = 0;
-    const linkedUsers = [];
+    if (userHwids.size === 0) return null;
+
+    // Collect this user's current IPs for shared-IP check
+    const userIps = new Set();
+    for (const key of keys) {
+      const ips = (state.activeIps || {})[key];
+      if (Array.isArray(ips)) {
+        for (const entry of ips) {
+          const ip = typeof entry === 'string' ? entry : (entry && entry.ip);
+          if (ip) userIps.add(ip);
+        }
+      }
+    }
+
+    // Check other users for same HWID or shared IP
+    let hwidLinked = 0, ipLinked = 0;
     for (const [otherKey, devices] of Object.entries(state.hwidDevices || {})) {
       if (keys.includes(otherKey)) continue;
       if (!Array.isArray(devices)) continue;
       for (const d of devices) {
-        const model = String(d.deviceModel || d.model || d.hwid || '').toLowerCase();
-        if (model && userDevices.includes(model)) {
-          linkedCount++;
-          linkedUsers.push(otherKey);
+        const hwid = (d && (d.hwid || d.deviceKey || d.key || '')).toLowerCase();
+        if (hwid && hwid.length >= 8 && userHwids.has(hwid)) {
+          hwidLinked++;
           break;
         }
       }
     }
-    if (linkedCount >= 3) {
-      return { id: 'fingerprint_cluster', category: 'strong', active: true, points: 25,
-        reason: `устройство совпадает с ${linkedCount} аккаунтами` };
+
+    // Shared IP check (same IP used by different accounts)
+    for (const [otherKey, ips] of Object.entries(state.activeIps || {})) {
+      if (keys.includes(otherKey)) continue;
+      if (!Array.isArray(ips)) continue;
+      for (const entry of ips) {
+        const ip = typeof entry === 'string' ? entry : (entry && entry.ip);
+        if (ip && userIps.has(ip)) { ipLinked++; break; }
+      }
     }
-    if (linkedCount >= 1) {
-      return { id: 'fingerprint_match', category: 'weak', active: true, points: 10,
-        reason: `общее устройство с ${linkedCount} аккаунтом(ами)` };
+
+    // HWID sharing is very strong signal
+    if (hwidLinked >= 2) {
+      return { id: 'fingerprint_cluster', category: 'strong', active: true, points: 25,
+        reason: `HWID совпадает с ${hwidLinked} аккаунтами` };
+    }
+    if (hwidLinked === 1) {
+      return { id: 'fingerprint_match', category: 'strong', active: true, points: 15,
+        reason: `общий HWID с 1 аккаунтом` };
+    }
+    // Same IP from different accounts (weaker signal)
+    if (ipLinked >= 3) {
+      return { id: 'shared_ip_cluster', category: 'weak', active: true, points: 10,
+        reason: `общий IP с ${ipLinked} аккаунтами` };
     }
     return null;
   }
