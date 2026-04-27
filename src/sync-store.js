@@ -995,6 +995,9 @@ function createStore(options = {}) {
           riskLevel: entry.riskLevel || 'notice',
           riskScore: Number(entry.riskScore || 0),
           reason: entry.reason || (Array.isArray(entry.signals) ? entry.signals.map(s => s.id || s.reason).filter(Boolean).join(', ') : null),
+          signals: Array.isArray(entry.signals) ? entry.signals.map(s => ({
+            id: s.id, reason: s.reason, points: s.points, category: s.category,
+          })) : [],
         };
         const existing = getIncidentRow(key);
 
@@ -1007,7 +1010,7 @@ function createStore(options = {}) {
             firstSeen: now,
             lastSeen: now,
           });
-          insertIncidentEvent(id, key, 'incident_opened', 'Инцидент создан системой детекции', { detection: incoming }, 'new');
+          insertIncidentEvent(id, key, 'incident_opened', 'Инцидент создан системой детекции', { detection: incoming, signals: incoming.signals }, 'new');
           continue;
         }
 
@@ -1039,6 +1042,7 @@ function createStore(options = {}) {
             previousScore: existing.risk_score,
             riskLevel: incoming.riskLevel,
             riskScore: incoming.riskScore,
+            signals: incoming.signals,
           }, nextStatus);
         }
       }

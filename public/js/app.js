@@ -1985,6 +1985,38 @@ function renderAuditLog(entries) {
 }
 
 function renderInvestigationEvents(events) {
+  // Signal ID → human-readable name
+  const signalNames = {
+    hwid_over_limit: '🔴 HWID превышает лимит',
+    hwid_churn_high: '🔄 Высокая ротация HWID',
+    hwid_churn_moderate: '🔄 Повышенная ротация HWID',
+    temporal_247: '⏰ Активность 24/7',
+    multi_city_extreme: '🌍 Мультигород (3+)',
+    multi_city_suspect: '🌍 Мультигород (2)',
+    impossible_travel: '✈️ Невозможное перемещение',
+    suspicious_travel: '✈️ Подозрительное перемещение',
+    velocity_extreme: '⚡ Экстремальный трафик',
+    velocity_high: '⚡ Высокий трафик',
+    fingerprint_cluster: '🔗 Кластер HWID',
+    fingerprint_match: '🔗 Совпадение HWID',
+    shared_ip_cluster: '🌐 Общий IP кластер',
+    isp_datacenter_heavy: '🏢 Datacenter IP',
+    isp_mix: '🏢 Микс ISP типов',
+    behavior_shift: '📊 Смена поведения',
+  };
+  const categoryLabels = {
+    deterministic: 'крит.',
+    strong: 'сильный',
+    weak: 'слабый',
+    info: 'инфо',
+  };
+  const categoryCls = {
+    deterministic: 'inv-sig-crit',
+    strong: 'inv-sig-strong',
+    weak: 'inv-sig-weak',
+    info: 'inv-sig-info',
+  };
+
   // Group consecutive events with same title+type into one row with count
   const grouped = [];
   for (const event of events) {
@@ -2015,6 +2047,34 @@ function renderInvestigationEvents(events) {
     const rangeStr = event.count > 1
       ? `${new Date(event.firstTs).toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit'})} — ${dateStr}`
       : `${dateStr} ${timeStr}`;
+
+    // Build signal detail for detection events
+    let signalHtml = '';
+    const signals = meta.signals || (meta.detection && meta.detection.signals) || [];
+    if (signals.length > 0) {
+      signalHtml = `<div class="inv-signals">${signals.map(s => {
+        const name = signalNames[s.id] || s.id;
+        const cat = categoryLabels[s.category] || s.category;
+        const catCls = categoryCls[s.category] || 'inv-sig-info';
+        return `<div class="inv-signal-row">
+          <span class="inv-signal-cat ${catCls}">${esc(cat)}</span>
+          <span class="inv-signal-name">${esc(name)}</span>
+          <span class="inv-signal-reason">${esc(s.reason || '')}</span>
+          <span class="inv-signal-pts">+${s.points || 0}</span>
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Enhanced detail for risk_updated events
+    let detailHtml = '';
+    if (event.detail) {
+      detailHtml = `<div class="inv-event-detail">${esc(event.detail)}</div>`;
+    }
+    if (meta.riskLevel && meta.riskScore !== undefined && !event.detail) {
+      const lvlIcon = meta.riskLevel === 'critical' ? '🔴' : meta.riskLevel === 'high' ? '🟠' : meta.riskLevel === 'warning' ? '🟡' : '🟢';
+      detailHtml = `<div class="inv-event-detail">${lvlIcon} ${esc(meta.riskLevel)} · ${meta.riskScore}/100${meta.previousScore !== undefined ? ` (было: ${meta.previousScore})` : ''}</div>`;
+    }
+
     return `<div class="inv-event inv-event-${cls}">
       <div class="inv-event-icon">${icon}</div>
       <div class="inv-event-content">
@@ -2022,7 +2082,8 @@ function renderInvestigationEvents(events) {
           <span class="inv-event-title">${esc(event.title || event.type || 'Событие')}${countBadge}</span>
           <span class="inv-event-time">${rangeStr}</span>
         </div>
-        ${event.detail ? `<div class="inv-event-detail">${esc(event.detail)}</div>` : ''}
+        ${detailHtml}
+        ${signalHtml}
         ${metaBits.length ? `<div class="inv-event-meta">${metaBits.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : ''}
       </div>
     </div>`;
@@ -2074,52 +2135,39 @@ function userCardHtml(u) {
   let signalsHtml = '';
   if (serverResult && serverResult.signals && serverResult.signals.length > 0) {
     const chips = serverResult.signals.map(s => {
-      const cat = s.category === 'deterministic' ? 'det' : s.category === 'strong' ? 'str' : 'ind';
-      const catLabel = s.category === 'deterministic' ? 'ФАКТ' : s.category === 'strong' ? 'СИЛЬНЫЙ' : 'КОСВЕННЫЙ';
-      const catIcon = s.category === 'deterministic' ? '🔴' : s.category === 'strong' ? '🟠' : '🔵';
+      const cat = s.category === 'deterministic' ? 'det' : s.category === 'strong' ? 'str' : s.category === 'weak' ? 'wk' : 'ind';
+      const catLabel = s.category === 'deterministic' ? 'крит.' : s.category === 'strong' ? 'сильный' : s.category === 'weak' ? 'слабый' : 'инфо';
 
-      // Parse reason into structured parts
-      const reason = s.reason || s.id || '';
-      let titleText = reason;
-      let detailText = '';
-      let linkedUsers = [];
+      // Map signal IDs to human-readable names
+      const signalTitles = {
+        hwid_over_limit: '🔴 HWID превышает лимит',
+        hwid_churn_high: '🔄 Высокая ротация HWID',
+        hwid_churn_moderate: '🔄 Повышенная ротация HWID',
+        temporal_247: '⏰ Активность 24/7',
+        multi_city_extreme: '🌍 Одновременно из 3+ городов',
+        multi_city_suspect: '🌍 Одновременно из 2 городов',
+        impossible_travel: '✈️ Невозможное перемещение',
+        suspicious_travel: '✈️ Подозрительное перемещение',
+        velocity_extreme: '⚡ Экстремальный трафик',
+        velocity_high: '⚡ Высокий трафик',
+        fingerprint_cluster: '🔗 Кластер HWID (мульти-акк)',
+        fingerprint_match: '🔗 Совпадение HWID',
+        shared_ip_cluster: '🌐 Общий IP кластер',
+        isp_datacenter_heavy: '🏢 Множество VPN/Proxy IP',
+        isp_mix: '🏢 Микс типов ISP',
+        behavior_shift: '📊 Резкая смена поведения',
+      };
 
-      // Parse "общий HWID с: user1, user2, user3" pattern
-      const hwidMatch = reason.match(/^общий HWID с:\s*(.+)$/i);
-      if (hwidMatch) {
-        titleText = '🔗 Общий HWID с другими аккаунтами';
-        const parts = hwidMatch[1].split(',').map(p => p.trim()).filter(Boolean);
-        linkedUsers = parts.filter(p => p.startsWith('user_') || p.length < 40);
-        const hwidIds = parts.filter(p => !p.startsWith('user_') && p.length >= 40);
-        if (hwidIds.length > 0) detailText = `HWID: ${hwidIds.map(h => h.slice(0, 12) + '…').join(', ')}`;
-      }
-
-      // Parse "ASN: X +Y" pattern
-      const asnMatch = reason.match(/^ASN:\s*(\d+)\s*\+(\d+)$/i);
-      if (asnMatch) {
-        titleText = '🌐 Много IP из одной сети';
-        detailText = `${asnMatch[1]} уникальных IP, +${asnMatch[2]} дополнительных`;
-      }
-
-      // Parse other common patterns
-      if (reason.includes('IP-превышение')) titleText = '📡 Устойчивое превышение IP';
-      if (reason.includes('impossible_travel')) titleText = '✈️ Невозможная геолокация';
-      if (reason.includes('concurrent_countries')) titleText = '🌍 Одновременно из разных стран';
-
-      const linkedHtml = linkedUsers.length > 0
-        ? `<div class="signal-linked">${linkedUsers.map(u =>
-            `<span class="signal-linked-user" onclick="openUserCard('${escAttr(u)}')" title="Открыть профиль">${esc(u)}</span>`
-          ).join('')}</div>`
-        : '';
+      const titleText = signalTitles[s.id] || s.reason || s.id;
+      const detailText = s.reason || '';
 
       return `<div class="signal-card signal-card-${cat}">
         <div class="signal-card-head">
           <span class="signal-cat">${catLabel}</span>
-          <span class="signal-card-title">${titleText}</span>
+          <span class="signal-card-title">${esc(titleText)}</span>
           ${s.points > 0 ? `<span class="signal-pts">+${s.points}</span>` : ''}
         </div>
-        ${detailText ? `<div class="signal-card-detail">${esc(detailText)}</div>` : ''}
-        ${linkedHtml}
+        ${detailText && detailText !== titleText ? `<div class="signal-card-detail">${esc(detailText)}</div>` : ''}
       </div>`;
     }).join('');
     signalsHtml = `<div class="uc-section">

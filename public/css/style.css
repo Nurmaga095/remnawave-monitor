@@ -382,6 +382,7 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 .signal-card { border-radius: 10px; padding: 12px 16px; border: 1px solid; }
 .signal-card-det { background: rgba(239,68,68,0.06); border-color: rgba(239,68,68,0.18); }
 .signal-card-str { background: rgba(245,158,11,0.06); border-color: rgba(245,158,11,0.18); }
+.signal-card-wk { background: rgba(234,179,8,0.04); border-color: rgba(234,179,8,0.12); }
 .signal-card-ind { background: rgba(100,116,139,0.06); border-color: rgba(100,116,139,0.12); }
 .signal-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .signal-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
@@ -389,9 +390,10 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 .signal-linked { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .signal-linked-user { font-size: 12px; font-weight: 600; color: var(--accent); background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.25); border-radius: 6px; padding: 3px 10px; cursor: pointer; transition: all 0.15s; }
 .signal-linked-user:hover { background: rgba(99,102,241,0.2); border-color: rgba(99,102,241,0.4); transform: translateY(-1px); }
-.signal-cat { font-size: 9px; font-weight: 800; letter-spacing: 0.05em; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+.signal-cat { font-size: 9px; font-weight: 800; letter-spacing: 0.05em; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; text-transform: uppercase; }
 .signal-card-det .signal-cat { background: rgba(239,68,68,0.15); color: var(--red); }
 .signal-card-str .signal-cat { background: rgba(245,158,11,0.15); color: var(--yellow); }
+.signal-card-wk .signal-cat { background: rgba(234,179,8,0.1); color: #ca8a04; }
 .signal-card-ind .signal-cat { background: rgba(100,116,139,0.12); color: var(--text3); }
 .signal-pts { font-weight: 800; font-size: 11px; color: var(--text3); margin-left: auto; }
 /* Legacy signal-chip kept for suspect cards */
@@ -867,6 +869,17 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 .inv-event-meta span { font-size: 10px; color: var(--text3); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
 .inv-event-count { display: inline-flex; align-items: center; justify-content: center; margin-left: 6px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: 10px; min-width: 22px; }
 
+/* Signal detail rows */
+.inv-signals { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; background: rgba(99,102,241,0.06); border-radius: 6px; border: 1px solid rgba(99,102,241,0.12); }
+.inv-signal-row { display: flex; align-items: center; gap: 8px; font-size: 11px; line-height: 1.5; }
+.inv-signal-cat { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0; }
+.inv-sig-crit { background: rgba(239,68,68,0.15); color: #ef4444; }
+.inv-sig-strong { background: rgba(249,115,22,0.15); color: #f97316; }
+.inv-sig-weak { background: rgba(234,179,8,0.15); color: #eab308; }
+.inv-sig-info { background: rgba(99,102,241,0.15); color: #6366f1; }
+.inv-signal-name { font-weight: 600; color: var(--text); white-space: nowrap; }
+.inv-signal-reason { color: var(--text2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-signal-pts { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--red); font-size: 11px; flex-shrink: 0; }
 /* Linked Accounts */
 .inv-linked-list { padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
 .inv-linked-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
