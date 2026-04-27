@@ -32,3 +32,6 @@ Desktop.ini
 
 # AI context (private development notes)
 GEMINI_CONTEXT.md
+
+# Windows clipboard / temp artifacts
+{*}.png

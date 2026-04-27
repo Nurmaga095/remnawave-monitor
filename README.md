@@ -90,7 +90,29 @@ No external frameworks required. Pure Node.js + vanilla JavaScript. Single depen
 - **Remnawave** panel instance with API access
 - *(Optional)* Build tools for `better-sqlite3` compilation: `build-essential`, `python3`
 
-### Installation
+### Automated Installation (recommended)
+
+The interactive installer will guide you through the entire setup:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/remnawave-monitor.git
+cd remnawave-monitor
+sudo chmod +x setup.sh
+sudo ./setup.sh
+```
+
+The installer will:
+- ✅ Check and install Node.js if needed
+- ✅ Install build tools for `better-sqlite3`
+- ✅ Ask for all required settings (credentials, Remnawave URL, API token)
+- ✅ Generate a secure session secret
+- ✅ Create `.env` with proper permissions
+- ✅ Install npm dependencies
+- ✅ Create a system user
+- ✅ Set up systemd service (auto-start on boot)
+- ✅ Optionally configure Caddy reverse proxy with HTTPS
+
+### Manual Installation
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/remnawave-monitor.git
@@ -271,6 +293,7 @@ remnawave-monitor/
 │   ├── index.html           # SPA shell
 │   ├── js/app.js            # Frontend application
 │   └── css/style.css        # Styles (dark/light theme)
+├── setup.sh                 # Interactive installer
 ├── .env.example             # Configuration template
 ├── Caddyfile.example        # Caddy reverse proxy config
 └── remnawave-monitor.service.example  # systemd unit
