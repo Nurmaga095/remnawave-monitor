@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Remnawave Monitor — Мониторинг подключений</title>
+  <meta name="description" content="Панель мониторинга одновременных подключений и HWID устройств в Remnawave" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- Экран входа -->
+  <div id="setup-screen" class="setup-screen">
+    <div class="setup-card">
+      <div class="setup-logo">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <rect width="48" height="48" rx="14" fill="url(#logoGrad)"/>
+          <path d="M14 24L20 18L26 24L32 18" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M14 30L20 24L26 30L32 24" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+          <defs>
+            <linearGradient id="logoGrad" x1="0" y1="0" x2="48" y2="48">
+              <stop offset="0%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#8b5cf6"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <span>Remnawave Monitor</span>
+      </div>
+      <h1>Вход в панель</h1>
+      <p class="setup-desc">Используй логин и пароль, заданные на сервере в .env</p>
+
+      <form onsubmit="connect(); return false;">
+        <div class="form-group">
+          <label for="login-username">Логин</label>
+          <input type="text" id="login-username" placeholder="admin" autocomplete="username" />
+        </div>
+
+        <div class="form-group">
+          <label for="login-password">Пароль</label>
+          <div class="input-with-toggle">
+            <input type="password" id="login-password" placeholder="Пароль панели" autocomplete="current-password" />
+            <button type="button" class="toggle-vis" onclick="toggleTokenVis()" title="Показать/скрыть">
+              <svg id="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="setup-error" class="setup-error hidden"></div>
+
+        <button type="submit" class="btn-connect" id="connect-btn">
+          <span id="connect-text">Войти</span>
+          <div id="connect-spinner" class="spinner hidden"></div>
+        </button>
+      </form>
+
+      <div class="setup-note">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        API-токен Remnawave хранится только на сервере
+      </div>
+    </div>
+  </div>
+
+  <!-- Основной интерфейс -->
+  <div id="main-app" class="main-app hidden">
+
+    <!-- Сайдбар -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-logo">
+        <svg width="32" height="32" viewBox="0 0 48 48" fill="none">
+          <rect width="48" height="48" rx="12" fill="url(#logoGrad2)"/>
+          <path d="M14 24L20 18L26 24L32 18" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M14 30L20 24L26 30L32 24" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+          <defs>
+            <linearGradient id="logoGrad2" x1="0" y1="0" x2="48" y2="48">
+              <stop offset="0%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#8b5cf6"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <span>RW Monitor</span>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" onclick="showTab('dashboard')" data-tab="dashboard">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          <span>Дашборд</span>
+        </button>
+        <button class="nav-item" onclick="showTab('sessions')" data-tab="sessions">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span>Активные сессии</span>
+        </button>
+
+        <button class="nav-item" onclick="showTab('suspects')" data-tab="suspects">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+          <span>Подозрительные</span>
+          <span id="suspects-badge" class="badge hidden">0</span>
+        </button>
+
+        <button class="nav-item" onclick="showTab('incidents')" data-tab="incidents">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 6h13"></path>
+            <path d="M8 12h13"></path>
+            <path d="M8 18h13"></path>
+            <path d="M3 6h.01"></path>
+            <path d="M3 12h.01"></path>
+            <path d="M3 18h.01"></path>
+          </svg>
+          <span>Инциденты</span>
+          <span id="incidents-badge" class="badge hidden">0</span>
+        </button>
+
+        <button class="nav-item" onclick="showTab('relations')" data-tab="relations">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="6" cy="6" r="3"></circle>
+            <circle cx="18" cy="6" r="3"></circle>
+            <circle cx="12" cy="18" r="3"></circle>
+            <path d="M8.6 7.5l6.8 0"></path>
+            <path d="M7.5 8.6l3 6.8"></path>
+            <path d="M16.5 8.6l-3 6.8"></path>
+          </svg>
+          <span>Связи</span>
+        </button>
+
+        <button class="nav-item" onclick="showTab('rules')" data-tab="rules">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Правила</span>
+          <span id="rules-badge" class="badge hidden">0</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="status-indicator" id="connection-status">
+          <div class="status-dot"></div>
+          <span id="status-text">Подключено</span>
+        </div>
+        <div class="last-update" id="last-update">—</div>
+        <button class="theme-toggle" onclick="toggleTheme()" id="theme-toggle-btn" title="Сменить тему">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="theme-icon">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <span id="theme-label">Светлая тема</span>
+        </button>
+        <button class="btn-logout" onclick="logout()" title="Выйти">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+          Выйти
+        </button>
+      </div>
+    </aside>
+
+    <!-- Основной контент -->
+    <main class="content">
+
+      <!-- Топбар -->
+      <div class="topbar">
+        <div class="topbar-left">
+          <button class="hamburger" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Меню">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <h2 id="page-title">Дашборд</h2>
+          <div id="auto-refresh-badge" class="refresh-badge">
+            <div class="pulse-dot"></div>
+            <span id="refresh-countdown">обновление через 30с</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="search-box">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="global-search" placeholder="Поиск по пользователю..." oninput="onSearch(this.value)" />
+          </div>
+          <button class="btn-refresh" onclick="manualRefresh()" id="refresh-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            Обновить
+          </button>
+        </div>
+      </div>
+
+      <!-- Дашборд -->
+      <div id="tab-dashboard" class="tab-content active">
+        <div class="stats-grid" id="stats-grid">
+          <div class="stat-card" id="stat-total-users">
+            <div class="stat-icon users-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="total-users">—</div>
+              <div class="stat-label">Всего пользователей</div>
+            </div>
+          </div>
+
+          <div class="stat-card" id="stat-active-sessions">
+            <div class="stat-icon active-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="active-sessions">—</div>
+              <div class="stat-label">Активны: <span data-online-window-label>Сейчас</span></div>
+            </div>
+          </div>
+
+          <div class="stat-card" id="stat-hwid-devices">
+            <div class="stat-icon hwid-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+              </svg>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="total-hwid">—</div>
+              <div class="stat-label">HWID устройств</div>
+            </div>
+          </div>
+
+          <div class="stat-card danger-card" id="stat-suspects">
+            <div class="stat-icon suspect-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="suspects-count">—</div>
+              <div class="stat-label">Подозрительных</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Сводные виджеты -->
+        <div class="dashboard-widgets">
+          <div class="panel-section widget-half">
+            <div class="section-header">
+              <h3>Активные страны</h3>
+              <span class="section-badge" id="country-count">0</span>
+            </div>
+            <div id="country-stats" class="country-stats"></div>
+          </div>
+          <div class="panel-section widget-half">
+            <div class="section-header">
+              <h3>Управление</h3>
+            </div>
+            <div id="mgmt-stats" class="mgmt-stats"></div>
+          </div>
+        </div>
+
+        <!-- Последние аномалии -->
+        <div class="panel-section">
+          <div class="section-header">
+            <h3>Обнаруженные аномалии</h3>
+            <button class="btn-sm" onclick="showTab('suspects')">Все →</button>
+          </div>
+          <div id="anomalies-list">
+            <div class="empty-state">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+              </svg>
+              <p>Аномалий не обнаружено</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Карта подключений -->
+        <div class="panel-section">
+          <div class="section-header">
+            <h3>🗺️ Карта подключений</h3>
+            <div class="section-actions">
+              <div class="window-switch compact">
+                <button data-online-window="live" class="active" onclick="setOnlineWindow('live')">Сейчас</button>
+                <button data-online-window="5" onclick="setOnlineWindow('5')">5м</button>
+                <button data-online-window="15" onclick="setOnlineWindow('15')">15м</button>
+                <button data-online-window="30" onclick="setOnlineWindow('30')">30м</button>
+              </div>
+              <span class="section-badge" id="map-ip-count">0</span>
+            </div>
+          </div>
+          <div id="connection-map" class="connection-map"></div>
+        </div>
+      </div>
+
+      <!-- Активные сессии -->
+      <div id="tab-sessions" class="tab-content">
+        <div class="sessions-toolbar">
+          <div class="filter-chips" id="filter-chips">
+            <button class="chip active" onclick="filterSessions('all', this)">Все</button>
+            <button class="chip" onclick="filterSessions('multi-ip', this)">Много IP</button>
+            <button class="chip" onclick="filterSessions('multi-hwid', this)">Много HWID</button>
+          </div>
+          <div class="window-switch">
+            <button data-online-window="live" class="active" onclick="setOnlineWindow('live')">Сейчас</button>
+            <button data-online-window="5" onclick="setOnlineWindow('5')">5м</button>
+            <button data-online-window="15" onclick="setOnlineWindow('15')">15м</button>
+            <button data-online-window="30" onclick="setOnlineWindow('30')">30м</button>
+          </div>
+          <div class="country-filter">
+            <select id="country-filter" onchange="filterByCountry(this.value)">
+              <option value="all">🌐 Все страны</option>
+            </select>
+          </div>
+          <div class="sort-select">
+            <label>Сортировка:</label>
+            <select id="sessions-sort" onchange="sortSessions(this.value)">
+              <option value="ip-desc">IP (больше)</option>
+              <option value="ip-asc">IP (меньше)</option>
+              <option value="name">Имя</option>
+            </select>
+          </div>
+        </div>
+        <div id="sessions-list" class="sessions-list">
+          <div class="loading-state">
+            <div class="spinner-large"></div>
+            <p>Загрузка данных...</p>
+          </div>
+        </div>
+      </div>
+
+
+
+      <!-- Подозрительные -->
+      <div id="tab-suspects" class="tab-content">
+        <div class="suspects-info">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          Подозрительными считаются пользователи с превышением HWID-лимита. Ротация устройств и паттерн 24/7 отображаются как предупреждения
+        </div>
+        <div id="suspects-list" class="suspects-list">
+          <div class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            <p>Подозрительных пользователей не обнаружено</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Инциденты -->
+      <div id="tab-incidents" class="tab-content">
+        <div class="incidents-info">
+          <div>
+            <b>Центр инцидентов</b>
+            <span>рабочий список пользователей, по которым сработала детекция</span>
+          </div>
+          <div>
+            <b>Причина</b>
+            <span>что именно насторожило: HWID, IP, сети, страны, трафик</span>
+          </div>
+          <div>
+            <b>Статус</b>
+            <span>отметка оператора: новый, в работе, предупреждён, закрыт или бан</span>
+          </div>
+        </div>
+        <div class="incidents-toolbar">
+          <div class="filter-chips">
+            <button class="chip active" data-incident-filter="open" onclick="filterIncidents('open', this)">Открытые</button>
+            <button class="chip" data-incident-filter="new" onclick="filterIncidents('new', this)">Новые</button>
+            <button class="chip" data-incident-filter="warned" onclick="filterIncidents('warned', this)">Предупреждены</button>
+            <button class="chip" data-incident-filter="closed" onclick="filterIncidents('closed', this)">Закрытые</button>
+            <button class="chip" data-incident-filter="all" onclick="filterIncidents('all', this)">Все</button>
+          </div>
+          <div id="incident-stats" class="incident-stats"></div>
+        </div>
+        <div id="incidents-list" class="incidents-list">
+          <div class="empty-state"><p>Инцидентов пока нет</p></div>
+        </div>
+      </div>
+
+      <!-- Связи -->
+      <div id="tab-relations" class="tab-content">
+        <div class="relations-header">
+          <div>
+            <h3>Граф связей за 30 минут</h3>
+            <p>IP, ASN и HWID-кластеры, где пересекаются несколько аккаунтов.</p>
+          </div>
+          <div class="relations-summary" id="relations-summary"></div>
+        </div>
+        <div id="relations-content" class="relations-content">
+          <div class="empty-state"><p>Связей пока не найдено</p></div>
+        </div>
+      </div>
+
+      <div id="tab-rules" class="tab-content">
+        <div class="rules-header">
+          <div>
+            <h3>Движок правил</h3>
+            <p>Настройте условия для автоматического уведомления при подозрительной активности.</p>
+          </div>
+          <button class="btn-primary" onclick="openRuleEditor()">+ Новое правило</button>
+        </div>
+
+        <div id="rules-triggers-section" class="card mb-16">
+          <div class="card-header">
+            <span>🔔 Последние срабатывания</span>
+            <span id="rules-triggers-count" class="badge">0</span>
+          </div>
+          <div id="rules-triggers-list" class="rules-triggers-list">
+            <div class="empty-state sm"><p>Нет срабатываний</p></div>
+          </div>
+        </div>
+
+        <div id="rules-list" class="rules-list">
+          <div class="empty-state"><p>Правила не созданы</p></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Toast уведомления -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Карточка пользователя -->
+  <div id="user-modal" class="modal-backdrop hidden" onclick="closeUserModal(event)">
+    <div class="user-modal" onclick="event.stopPropagation()">
+      <div id="user-modal-content"></div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

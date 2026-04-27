@@ -1,0 +1,26 @@
+{
+  "name": "remnawave-monitor",
+  "version": "1.0.0",
+  "description": "Self-hosted monitoring dashboard for Remnawave VPN panel. Real-time connection tracking, HWID-based abuse detection, incident management, and interactive connection map.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/remnawave-sync.js && node --check src/sync-store.js && node --check src/detect.js && node --check src/rules.js && node --check src/ip-check.js"
+  },
+  "keywords": [
+    "remnawave",
+    "vpn",
+    "monitoring",
+    "dashboard",
+    "hwid",
+    "abuse-detection",
+    "self-hosted"
+  ],
+  "dependencies": {
+    "better-sqlite3": "11.10.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

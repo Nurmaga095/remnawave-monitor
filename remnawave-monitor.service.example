@@ -1,0 +1,21 @@
+[Unit]
+Description=Remnawave Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=remnawave
+Group=remnawave
+WorkingDirectory=/opt/remnawave-monitor
+EnvironmentFile=/opt/remnawave-monitor/.env
+ExecStart=/usr/bin/node /opt/remnawave-monitor/src/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
