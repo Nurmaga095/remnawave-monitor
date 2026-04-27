@@ -882,6 +882,7 @@ function renderAll() {
   renderSuspects();
   renderIncidents();
   renderRelations();
+  checkSoundAlerts();
   _cachedSuspects = null;
 }
 
@@ -918,6 +919,8 @@ async function executeBan(userKey, action) {
     const r = await fetch('/api/ban', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userKey, action }) });
     if (!r.ok) throw new Error((await r.json()).error || r.statusText);
     toast(action === 'unban' ? 'Пользователь разбанен' : 'Пользователь заблокирован', 'ok');
+    // Small delay to let server-side state settle before reloading
+    await new Promise(r => setTimeout(r, 500));
     await loadAll();
     openUserCard(userKey);
   } catch (e) { toast(`Ошибка: ${e.message}`, 'error'); }
@@ -1554,6 +1557,9 @@ function renderDashboard() {
 
   // Connection map
   renderConnectionMap();
+
+  // Activity chart
+  renderActivityChart();
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────
@@ -3773,3 +3779,227 @@ function disconnectSSE() {
   if (_sseSource) { try { _sseSource.close(); } catch(e) {} _sseSource = null; }
   if (_sseReconnectTimer) { clearTimeout(_sseReconnectTimer); _sseReconnectTimer = null; }
 }
+
+// ─── Activity Chart (Canvas) ──────────────────────────────────────
+let _chartRange = '6h';
+
+function setChartRange(range, btn) {
+  _chartRange = range;
+  if (btn) {
+    btn.closest('.window-switch').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+  renderActivityChart();
+}
+
+function renderActivityChart() {
+  const canvas = document.getElementById('activity-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const w = rect.width;
+  const h = 180;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.scale(dpr, dpr);
+
+  const history = (state.data && state.data.activityHistory) || [];
+  if (history.length < 2) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'var(--text3, #666)';
+    ctx.font = '13px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Недостаточно данных для графика', w / 2, h / 2);
+    return;
+  }
+
+  const now = Date.now();
+  const rangeMs = _chartRange === '7d' ? 7 * 24 * 60 * 60 * 1000
+    : _chartRange === '24h' ? 24 * 60 * 60 * 1000
+    : 6 * 60 * 60 * 1000;
+  const cutoff = now - rangeMs;
+  const data = history.filter(p => p.ts >= cutoff);
+
+  if (data.length < 2) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#666';
+    ctx.font = '13px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Нет данных за выбранный период', w / 2, h / 2);
+    return;
+  }
+
+  const padL = 45, padR = 15, padT = 15, padB = 30;
+  const chartW = w - padL - padR;
+  const chartH = h - padT - padB;
+
+  const maxOnline = Math.max(1, ...data.map(p => p.online || 0));
+  const maxSuspect = Math.max(1, ...data.map(p => p.suspects || 0));
+  const maxVal = Math.max(maxOnline, maxSuspect * 4); // suspects scale x4 for visibility
+
+  const isDark = !document.documentElement.getAttribute('data-theme');
+  const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+  const textColor = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
+  const onlineColor = '#6366f1';
+  const suspectColor = '#ef4444';
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Grid lines
+  const gridLines = 4;
+  ctx.strokeStyle = gridColor;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.font = '11px Inter, sans-serif';
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= gridLines; i++) {
+    const y = padT + (chartH / gridLines) * i;
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(w - padR, y);
+    ctx.stroke();
+    const val = Math.round(maxVal * (1 - i / gridLines));
+    ctx.fillText(val, padL - 6, y + 4);
+  }
+  ctx.setLineDash([]);
+
+  // Time labels
+  ctx.textAlign = 'center';
+  const labelCount = Math.min(6, data.length);
+  const labelStep = Math.floor(data.length / labelCount);
+  for (let i = 0; i < data.length; i += labelStep) {
+    const p = data[i];
+    const x = padL + (i / (data.length - 1)) * chartW;
+    const d = new Date(p.ts);
+    const label = _chartRange === '7d'
+      ? `${d.getDate()}.${String(d.getMonth()+1).padStart(2,'0')}`
+      : `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    ctx.fillText(label, x, h - 8);
+  }
+
+  // Draw line helper
+  function drawLine(points, color, fillAlpha) {
+    if (points.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++) {
+      const [x, y] = points[i];
+      const [px, py] = points[i - 1];
+      const cpx = (px + x) / 2;
+      ctx.bezierCurveTo(cpx, py, cpx, y, x, y);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Fill
+    ctx.lineTo(points[points.length - 1][0], padT + chartH);
+    ctx.lineTo(points[0][0], padT + chartH);
+    ctx.closePath();
+    ctx.fillStyle = color.replace(')', `,${fillAlpha})`).replace('rgb', 'rgba');
+    ctx.fill();
+  }
+
+  // Online line
+  const onlinePoints = data.map((p, i) => [
+    padL + (i / (data.length - 1)) * chartW,
+    padT + chartH - ((p.online || 0) / maxVal) * chartH
+  ]);
+  drawLine(onlinePoints, onlineColor, 0.12);
+
+  // Suspects line (scaled)
+  const suspectScale = maxVal / Math.max(1, maxSuspect);
+  const suspectPoints = data.map((p, i) => [
+    padL + (i / (data.length - 1)) * chartW,
+    padT + chartH - (((p.suspects || 0) * suspectScale) / maxVal) * chartH * 0.25
+  ]);
+  if (data.some(p => p.suspects > 0)) {
+    drawLine(suspectPoints, suspectColor, 0.08);
+  }
+}
+
+// ─── Sound Notifications ──────────────────────────────────────────
+let _soundEnabled = localStorage.getItem('rwm_sound') === '1';
+let _prevSuspectsCount = -1;
+let _prevIncidentCount = -1;
+
+function toggleAlertSound() {
+  _soundEnabled = !_soundEnabled;
+  localStorage.setItem('rwm_sound', _soundEnabled ? '1' : '0');
+  updateSoundButton();
+  if (_soundEnabled) {
+    playAlertSound(true); // test beep
+    toast('Звуковые уведомления включены', 'ok');
+  } else {
+    toast('Звуковые уведомления выключены', 'ok');
+  }
+}
+
+function updateSoundButton() {
+  const label = document.getElementById('sound-label');
+  const icon = document.getElementById('sound-icon');
+  if (label) label.textContent = _soundEnabled ? 'Звук: вкл' : 'Звук: выкл';
+  if (icon) icon.innerHTML = _soundEnabled
+    ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>'
+    : '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>';
+}
+
+function playAlertSound(quiet) {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(quiet ? 600 : 880, audioCtx.currentTime);
+    gain.gain.setValueAtTime(quiet ? 0.08 : 0.15, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (quiet ? 0.15 : 0.4));
+    osc.start();
+    osc.stop(audioCtx.currentTime + (quiet ? 0.15 : 0.4));
+    if (!quiet) {
+      // Second beep for urgency
+      setTimeout(() => {
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.connect(gain2);
+        gain2.connect(audioCtx.destination);
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(1100, audioCtx.currentTime);
+        gain2.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+        osc2.start();
+        osc2.stop(audioCtx.currentTime + 0.3);
+      }, 200);
+    }
+  } catch (e) {
+    debugLog('[sound] failed:', e.message);
+  }
+}
+
+function checkSoundAlerts() {
+  if (!_soundEnabled) return;
+
+  const suspects = _cachedSuspects || [];
+  const incidentStats = (state.data && state.data.incidentStats) || {};
+  const currentSuspects = suspects.length;
+  const currentIncidents = Number(incidentStats.new || 0);
+
+  if (_prevSuspectsCount >= 0 && currentSuspects > _prevSuspectsCount) {
+    playAlertSound(false);
+    toast(`⚠️ Новый подозрительный: +${currentSuspects - _prevSuspectsCount}`, 'error');
+  } else if (_prevIncidentCount >= 0 && currentIncidents > _prevIncidentCount) {
+    playAlertSound(false);
+    toast(`🚨 Новый инцидент: +${currentIncidents - _prevIncidentCount}`, 'error');
+  }
+
+  _prevSuspectsCount = currentSuspects;
+  _prevIncidentCount = currentIncidents;
+}
+
+document.addEventListener('DOMContentLoaded', updateSoundButton);

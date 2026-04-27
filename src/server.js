@@ -34,7 +34,7 @@ const IP_GEO_CONCURRENCY = Number(process.env.IP_GEO_CONCURRENCY || 4);
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
 const PUBLIC_DIR = path.join(PROJECT_ROOT, 'public');
-const PUBLIC_FILES = new Set(['index.html', 'css/style.css', 'js/app.js', 'favicon.ico']);
+const PUBLIC_FILES = new Set(['index.html', 'css/style.css', 'js/app.js', 'favicon.ico', 'favicon.svg']);
 const COOKIE_NAME = 'rwm_session';
 const ALLOWED_PROXY_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -48,6 +48,27 @@ const MIME = {
 };
 
 const sessions = new Map();
+
+// ─── Rate Limiting (login) ─────────────────────────────────────
+const loginAttempts = new Map();
+const LOGIN_RATE_LIMIT = 5;
+const LOGIN_RATE_WINDOW_MS = 60 * 1000;
+function checkLoginRateLimit(ip) {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry || now - entry.windowStart > LOGIN_RATE_WINDOW_MS) {
+    loginAttempts.set(ip, { windowStart: now, count: 1 });
+    return true;
+  }
+  entry.count++;
+  if (entry.count > LOGIN_RATE_LIMIT) return false;
+  return true;
+}
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) return String(forwarded).split(',')[0].trim();
+  return req.socket.remoteAddress || '127.0.0.1';
+}
 
 const store = createStore({
   dbPath: DB_PATH,
@@ -81,6 +102,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, { Allow: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' });
       res.end();
+      return;
+    }
+
+    if (pathname === '/health') {
+      handleHealth(req, res);
       return;
     }
 
@@ -233,9 +259,40 @@ function isRemnawaveConfigured() {
   return Boolean(REMNAWAVE_BASE_URL && REMNAWAVE_API_TOKEN);
 }
 
+function handleHealth(req, res) {
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'GET' });
+    return;
+  }
+  const syncStatus = dataSync.getStatus();
+  const uptime = process.uptime();
+  sendJson(res, 200, {
+    status: 'ok',
+    uptime: Math.round(uptime),
+    uptimeHuman: uptime >= 3600 ? `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m` : `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`,
+    sync: {
+      status: syncStatus.status,
+      lastFinishedAt: syncStatus.lastFinishedAt,
+      nextSyncAt: syncStatus.nextSyncAt,
+      isSyncing: syncStatus.isSyncing,
+    },
+    remnawaveConfigured: isRemnawaveConfigured(),
+    sseClients: sseClients.size,
+    sessions: sessions.size,
+    memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    nodeVersion: process.version,
+  });
+}
+
 async function handleLogin(req, res) {
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' });
+    return;
+  }
+
+  const clientIp = getClientIp(req);
+  if (!checkLoginRateLimit(clientIp)) {
+    sendJson(res, 429, { error: 'Слишком много попыток входа. Подождите минуту.' });
     return;
   }
 
@@ -260,6 +317,7 @@ async function handleLogin(req, res) {
 
   if (!ok) {
     await delay(300);
+    console.log(`[auth] failed login attempt from ${clientIp}`);
     sendJson(res, 401, { error: 'Invalid username or password' });
     return;
   }
@@ -931,6 +989,7 @@ server.listen(PORT, HOST, () => {
   console.log('');
   console.log('  Remnawave Monitor started');
   console.log(`  Local URL: http://${HOST}:${PORT}`);
+  console.log(`  Health check: http://${HOST}:${PORT}/health`);
   console.log('');
 
   if (!isAuthConfigured()) {
@@ -945,6 +1004,32 @@ server.listen(PORT, HOST, () => {
     console.log(`  Sync interval: ${SYNC_INTERVAL_SECONDS}s`);
   }
 });
+
+// ─── Graceful Shutdown ────────────────────────────────────────────
+function gracefulShutdown(signal) {
+  console.log(`\n[shutdown] Received ${signal}, shutting down gracefully...`);
+
+  // Close SSE connections
+  for (const client of sseClients) {
+    try { client.res.end(); } catch { /* ignore */ }
+  }
+  sseClients.clear();
+
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('[shutdown] HTTP server closed');
+    process.exit(0);
+  });
+
+  // Force exit after 10 seconds
+  setTimeout(() => {
+    console.error('[shutdown] Forced exit after timeout');
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // ─── Rule Engine Handlers ────────────────────────────────────────
 

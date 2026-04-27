@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
@@ -167,6 +168,14 @@
           </svg>
           <span id="theme-label">Светлая тема</span>
         </button>
+        <button class="theme-toggle" onclick="toggleAlertSound()" id="sound-toggle-btn" title="Звуковые уведомления">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="sound-icon">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+          <span id="sound-label">Звук: выкл</span>
+        </button>
         <button class="btn-logout" onclick="logout()" title="Выйти">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
@@ -303,6 +312,27 @@
               </svg>
               <p>Аномалий не обнаружено</p>
             </div>
+          </div>
+        </div>
+
+        <!-- График активности -->
+        <div class="panel-section">
+          <div class="section-header">
+            <h3>📈 Активность</h3>
+            <div class="section-actions">
+              <div class="window-switch compact">
+                <button class="active" onclick="setChartRange('6h', this)">6ч</button>
+                <button onclick="setChartRange('24h', this)">24ч</button>
+                <button onclick="setChartRange('7d', this)">7д</button>
+              </div>
+            </div>
+          </div>
+          <div class="activity-chart-wrap">
+            <canvas id="activity-chart" height="180"></canvas>
+          </div>
+          <div class="chart-legend">
+            <span class="chart-legend-item"><span class="chart-dot chart-dot-online"></span> Онлайн</span>
+            <span class="chart-legend-item"><span class="chart-dot chart-dot-suspect"></span> Подозрительные</span>
           </div>
         </div>
 

@@ -996,3 +996,16 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 
   .tab-content { padding: 12px; }
 }
+
+/* ── Activity Chart Widget ── */
+.activity-chart-wrap { padding: 8px 16px; position: relative; }
+.activity-chart-wrap canvas { display: block; width: 100%; border-radius: 8px; }
+.chart-legend { display: flex; align-items: center; gap: 20px; padding: 6px 16px 10px; justify-content: center; }
+.chart-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text3); font-weight: 600; }
+.chart-dot { width: 8px; height: 8px; border-radius: 50%; }
+.chart-dot-online { background: #6366f1; box-shadow: 0 0 6px rgba(99,102,241,0.4); }
+.chart-dot-suspect { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.4); }
+
+/* ── Sound Toggle ── */
+#sound-toggle-btn.sound-on { color: var(--green); }
+#sound-toggle-btn.sound-on svg { color: var(--green); }
