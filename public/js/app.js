@@ -3797,6 +3797,7 @@ function disconnectSSE() {
 
 // ─── Activity Chart (Canvas) ──────────────────────────────────────
 let _chartRange = '6h';
+let _chartHoverIdx = -1;
 
 function setChartRange(range, btn) {
   _chartRange = range;
@@ -3815,126 +3816,344 @@ function renderActivityChart() {
 
   const rect = canvas.parentElement.getBoundingClientRect();
   const w = rect.width;
-  const h = 180;
+  const h = 200;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
   ctx.scale(dpr, dpr);
 
+  const isDark = !document.documentElement.getAttribute('data-theme') || document.documentElement.getAttribute('data-theme') !== 'light';
   const history = (state.data && state.data.activityHistory) || [];
+
+  // Empty state
   if (history.length < 2) {
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'var(--text3, #666)';
-    ctx.font = '13px Inter, sans-serif';
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
+    ctx.font = '500 13px Inter, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Недостаточно данных для графика', w / 2, h / 2);
+    ctx.fillText('Ожидание данных активности...', w / 2, h / 2 - 10);
+    ctx.font = '400 11px Inter, sans-serif';
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+    ctx.fillText('Данные появятся после нескольких циклов синхронизации', w / 2, h / 2 + 10);
     return;
   }
 
   const now = Date.now();
-  const rangeMs = _chartRange === '7d' ? 7 * 24 * 60 * 60 * 1000
-    : _chartRange === '24h' ? 24 * 60 * 60 * 1000
-    : 6 * 60 * 60 * 1000;
+  const rangeMs = _chartRange === '7d' ? 7*24*60*60*1000 : _chartRange === '24h' ? 24*60*60*1000 : 6*60*60*1000;
   const cutoff = now - rangeMs;
   const data = history.filter(p => p.ts >= cutoff);
 
+  // Update data count badge
+  const countBadge = document.getElementById('chart-data-count');
+  if (countBadge) countBadge.textContent = `${data.length} точек`;
   if (data.length < 2) {
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#666';
-    ctx.font = '13px Inter, sans-serif';
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
+    ctx.font = '500 13px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('Нет данных за выбранный период', w / 2, h / 2);
     return;
   }
 
-  const padL = 45, padR = 15, padT = 15, padB = 30;
-  const chartW = w - padL - padR;
-  const chartH = h - padT - padB;
+  // Layout
+  const padL = 48, padR = 20, padT = 20, padB = 44;
+  const cW = w - padL - padR;
+  const cH = h - padT - padB;
 
   const maxOnline = Math.max(1, ...data.map(p => p.online || 0));
-  const maxSuspect = Math.max(1, ...data.map(p => p.suspects || 0));
-  const maxVal = Math.max(maxOnline, maxSuspect * 4); // suspects scale x4 for visibility
+  const maxSuspect = Math.max(0, ...data.map(p => p.suspects || 0));
+  const avgOnline = Math.round(data.reduce((s, p) => s + (p.online || 0), 0) / data.length);
+  const maxYOnline = Math.ceil(maxOnline * 1.15); // 15% headroom
 
-  const isDark = !document.documentElement.getAttribute('data-theme');
-  const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-  const textColor = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
-  const onlineColor = '#6366f1';
-  const suspectColor = '#ef4444';
+  // Colors
+  const onlineStroke = isDark ? '#818cf8' : '#6366f1';
+  const onlineGlow = isDark ? 'rgba(129,140,248,0.35)' : 'rgba(99,102,241,0.25)';
+  const suspectStroke = isDark ? '#f87171' : '#ef4444';
+  const suspectGlow = isDark ? 'rgba(248,113,113,0.3)' : 'rgba(239,68,68,0.2)';
+  const gridColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)';
+  const textColor = isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
+  const avgColor = isDark ? 'rgba(129,140,248,0.2)' : 'rgba(99,102,241,0.15)';
 
   ctx.clearRect(0, 0, w, h);
 
-  // Grid lines
-  const gridLines = 4;
+  // Helper: x/y from data index
+  const xAt = (i) => padL + (i / (data.length - 1)) * cW;
+  const yOnline = (v) => padT + cH - (v / maxYOnline) * cH;
+  const ySuspect = (v) => maxSuspect > 0 ? padT + cH - (v / Math.max(1, maxSuspect) * 0.4) * cH : padT + cH;
+
+  // ── Grid ──
+  ctx.setLineDash([2, 6]);
   ctx.strokeStyle = gridColor;
   ctx.lineWidth = 1;
-  ctx.setLineDash([4, 4]);
-  ctx.font = '11px Inter, sans-serif';
-  ctx.fillStyle = textColor;
-  ctx.textAlign = 'right';
-  for (let i = 0; i <= gridLines; i++) {
-    const y = padT + (chartH / gridLines) * i;
-    ctx.beginPath();
-    ctx.moveTo(padL, y);
-    ctx.lineTo(w - padR, y);
-    ctx.stroke();
-    const val = Math.round(maxVal * (1 - i / gridLines));
-    ctx.fillText(val, padL - 6, y + 4);
+  const gridSteps = 4;
+  for (let i = 0; i <= gridSteps; i++) {
+    const y = padT + (cH / gridSteps) * i;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
   }
   ctx.setLineDash([]);
 
-  // Time labels
+  // ── Average line ──
+  const avgY = yOnline(avgOnline);
+  ctx.setLineDash([6, 6]);
+  ctx.strokeStyle = avgColor;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, avgY); ctx.lineTo(w - padR, avgY); ctx.stroke();
+  ctx.setLineDash([]);
+  // AVG label
+  ctx.fillStyle = isDark ? 'rgba(129,140,248,0.4)' : 'rgba(99,102,241,0.5)';
+  ctx.font = '600 9px Inter, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`avg ${avgOnline}`, padL + 4, avgY - 4);
+
+  // ── Y-axis labels ──
+  ctx.font = '500 10px JetBrains Mono, monospace';
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= gridSteps; i++) {
+    const y = padT + (cH / gridSteps) * i;
+    const val = Math.round(maxYOnline * (1 - i / gridSteps));
+    ctx.fillText(val, padL - 8, y + 3);
+  }
+
+  // ── X-axis labels ──
   ctx.textAlign = 'center';
-  const labelCount = Math.min(6, data.length);
-  const labelStep = Math.floor(data.length / labelCount);
+  const labelCount = Math.min(7, data.length);
+  const labelStep = Math.max(1, Math.floor(data.length / labelCount));
   for (let i = 0; i < data.length; i += labelStep) {
-    const p = data[i];
-    const x = padL + (i / (data.length - 1)) * chartW;
-    const d = new Date(p.ts);
+    const x = xAt(i);
+    const d = new Date(data[i].ts);
     const label = _chartRange === '7d'
       ? `${d.getDate()}.${String(d.getMonth()+1).padStart(2,'0')}`
       : `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    ctx.fillText(label, x, h - 8);
+    ctx.fillText(label, x, h - padB + 16);
   }
 
-  // Draw line helper
-  function drawLine(points, color, fillAlpha) {
-    if (points.length < 2) return;
-    ctx.beginPath();
-    ctx.moveTo(points[0][0], points[0][1]);
+  // ── Build smooth bezier path ──
+  function buildPath(points) {
+    const path = new Path2D();
+    if (points.length < 2) return path;
+    path.moveTo(points[0][0], points[0][1]);
     for (let i = 1; i < points.length; i++) {
       const [x, y] = points[i];
       const [px, py] = points[i - 1];
       const cpx = (px + x) / 2;
-      ctx.bezierCurveTo(cpx, py, cpx, y, x, y);
+      path.bezierCurveTo(cpx, py, cpx, y, x, y);
     }
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Fill
-    ctx.lineTo(points[points.length - 1][0], padT + chartH);
-    ctx.lineTo(points[0][0], padT + chartH);
-    ctx.closePath();
-    ctx.fillStyle = color.replace(')', `,${fillAlpha})`).replace('rgb', 'rgba');
-    ctx.fill();
+    return path;
   }
 
-  // Online line
-  const onlinePoints = data.map((p, i) => [
-    padL + (i / (data.length - 1)) * chartW,
-    padT + chartH - ((p.online || 0) / maxVal) * chartH
-  ]);
-  drawLine(onlinePoints, onlineColor, 0.12);
+  // ── Online area ──
+  const onlinePoints = data.map((p, i) => [xAt(i), yOnline(p.online || 0)]);
+  const onlinePath = buildPath(onlinePoints);
 
-  // Suspects line (scaled)
-  const suspectScale = maxVal / Math.max(1, maxSuspect);
-  const suspectPoints = data.map((p, i) => [
-    padL + (i / (data.length - 1)) * chartW,
-    padT + chartH - (((p.suspects || 0) * suspectScale) / maxVal) * chartH * 0.25
-  ]);
-  if (data.some(p => p.suspects > 0)) {
-    drawLine(suspectPoints, suspectColor, 0.08);
+  // Gradient fill
+  const onlineGrad = ctx.createLinearGradient(0, padT, 0, padT + cH);
+  onlineGrad.addColorStop(0, isDark ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.15)');
+  onlineGrad.addColorStop(0.6, isDark ? 'rgba(99,102,241,0.06)' : 'rgba(99,102,241,0.04)');
+  onlineGrad.addColorStop(1, 'rgba(99,102,241,0)');
+
+  // Fill area
+  const areaPath = new Path2D();
+  areaPath.moveTo(onlinePoints[0][0], padT + cH);
+  areaPath.lineTo(onlinePoints[0][0], onlinePoints[0][1]);
+  for (let i = 1; i < onlinePoints.length; i++) {
+    const [x, y] = onlinePoints[i];
+    const [px, py] = onlinePoints[i - 1];
+    const cpx = (px + x) / 2;
+    areaPath.bezierCurveTo(cpx, py, cpx, y, x, y);
+  }
+  areaPath.lineTo(onlinePoints[onlinePoints.length - 1][0], padT + cH);
+  areaPath.closePath();
+  ctx.fillStyle = onlineGrad;
+  ctx.fill(areaPath);
+
+  // Line glow
+  ctx.save();
+  ctx.shadowColor = onlineGlow;
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = onlineStroke;
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.stroke(onlinePath);
+  ctx.restore();
+
+  // Line crisp
+  ctx.strokeStyle = onlineStroke;
+  ctx.lineWidth = 2;
+  ctx.stroke(onlinePath);
+
+  // ── Suspect area (if any) ──
+  if (maxSuspect > 0) {
+    const suspectPoints = data.map((p, i) => [xAt(i), ySuspect(p.suspects || 0)]);
+    const suspPath = buildPath(suspectPoints);
+
+    // Gradient fill
+    const suspGrad = ctx.createLinearGradient(0, padT, 0, padT + cH);
+    suspGrad.addColorStop(0, isDark ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.1)');
+    suspGrad.addColorStop(1, 'rgba(239,68,68,0)');
+
+    const suspArea = new Path2D();
+    suspArea.moveTo(suspectPoints[0][0], padT + cH);
+    suspArea.lineTo(suspectPoints[0][0], suspectPoints[0][1]);
+    for (let i = 1; i < suspectPoints.length; i++) {
+      const [x, y] = suspectPoints[i];
+      const [px, py] = suspectPoints[i - 1];
+      const cpx = (px + x) / 2;
+      suspArea.bezierCurveTo(cpx, py, cpx, y, x, y);
+    }
+    suspArea.lineTo(suspectPoints[suspectPoints.length - 1][0], padT + cH);
+    suspArea.closePath();
+    ctx.fillStyle = suspGrad;
+    ctx.fill(suspArea);
+
+    ctx.save();
+    ctx.shadowColor = suspectGlow;
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = suspectStroke;
+    ctx.lineWidth = 2;
+    ctx.stroke(suspPath);
+    ctx.restore();
+    ctx.strokeStyle = suspectStroke;
+    ctx.lineWidth = 1.5;
+    ctx.stroke(suspPath);
+
+    // Current suspect dot
+    const lastSusp = suspectPoints[suspectPoints.length - 1];
+    if (data[data.length - 1].suspects > 0) {
+      ctx.beginPath();
+      ctx.arc(lastSusp[0], lastSusp[1], 4, 0, Math.PI * 2);
+      ctx.fillStyle = suspectStroke;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(lastSusp[0], lastSusp[1], 7, 0, Math.PI * 2);
+      ctx.strokeStyle = isDark ? 'rgba(248,113,113,0.3)' : 'rgba(239,68,68,0.2)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  // ── Current value dot (online) ──
+  const lastPt = onlinePoints[onlinePoints.length - 1];
+  // Outer ring (glow)
+  ctx.beginPath();
+  ctx.arc(lastPt[0], lastPt[1], 8, 0, Math.PI * 2);
+  ctx.fillStyle = isDark ? 'rgba(129,140,248,0.15)' : 'rgba(99,102,241,0.12)';
+  ctx.fill();
+  // Inner ring
+  ctx.beginPath();
+  ctx.arc(lastPt[0], lastPt[1], 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = onlineStroke;
+  ctx.fill();
+  // White core
+  ctx.beginPath();
+  ctx.arc(lastPt[0], lastPt[1], 2, 0, Math.PI * 2);
+  ctx.fillStyle = isDark ? '#fff' : '#fff';
+  ctx.fill();
+
+  // ── Stats bar at bottom ──
+  const statsY = h - 10;
+  ctx.font = '600 10px Inter, sans-serif';
+  const lastVal = data[data.length - 1].online || 0;
+  const statsItems = [
+    { label: 'Сейчас', value: lastVal, color: onlineStroke },
+    { label: 'Max', value: maxOnline, color: isDark ? 'rgba(52,211,153,0.8)' : '#059669' },
+    { label: 'Avg', value: avgOnline, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)' },
+  ];
+  if (maxSuspect > 0) {
+    statsItems.push({ label: '⚠ Max', value: maxSuspect, color: suspectStroke });
+  }
+  ctx.textAlign = 'center';
+  const statsW = cW / statsItems.length;
+  statsItems.forEach((item, i) => {
+    const sx = padL + statsW * i + statsW / 2;
+    ctx.fillStyle = item.color;
+    ctx.font = '800 11px JetBrains Mono, monospace';
+    ctx.fillText(item.value, sx, statsY - 1);
+    ctx.fillStyle = textColor;
+    ctx.font = '500 9px Inter, sans-serif';
+    ctx.fillText(item.label, sx, statsY + 10);
+  });
+
+  // ── Hover tooltip ──
+  if (!canvas._hasHover) {
+    canvas._hasHover = true;
+    canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('mousemove', (e) => {
+      const r = canvas.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      if (mx < padL || mx > w - padR) { _chartHoverIdx = -1; renderActivityChart(); return; }
+      const ratio = (mx - padL) / cW;
+      const idx = Math.round(ratio * (data.length - 1));
+      if (idx >= 0 && idx < data.length && idx !== _chartHoverIdx) {
+        _chartHoverIdx = idx;
+        renderActivityChart();
+      }
+    });
+    canvas.addEventListener('mouseleave', () => {
+      _chartHoverIdx = -1;
+      renderActivityChart();
+    });
+  }
+
+  // Draw hover crosshair + tooltip
+  if (_chartHoverIdx >= 0 && _chartHoverIdx < data.length) {
+    const hx = xAt(_chartHoverIdx);
+    const hp = data[_chartHoverIdx];
+    const hy = yOnline(hp.online || 0);
+
+    // Vertical line
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(hx, padT); ctx.lineTo(hx, padT + cH); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Dot on line
+    ctx.beginPath();
+    ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = onlineStroke;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(hx, hy, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+
+    // Tooltip
+    const d = new Date(hp.ts);
+    const timeStr = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    const dateStr = `${d.getDate()}.${String(d.getMonth()+1).padStart(2,'0')}`;
+    const tipLines = [`${dateStr}  ${timeStr}`, `Онлайн: ${hp.online || 0}`];
+    if ((hp.suspects || 0) > 0) tipLines.push(`Подозр: ${hp.suspects}`);
+    if ((hp.ips || 0) > 0) tipLines.push(`IP: ${hp.ips}`);
+
+    const tipFont = '600 11px Inter, sans-serif';
+    ctx.font = tipFont;
+    const tipW = Math.max(...tipLines.map(l => ctx.measureText(l).width)) + 20;
+    const tipH = tipLines.length * 17 + 12;
+    let tipX = hx + 12;
+    if (tipX + tipW > w - 10) tipX = hx - tipW - 12;
+    let tipY = hy - tipH / 2;
+    if (tipY < padT) tipY = padT;
+    if (tipY + tipH > padT + cH) tipY = padT + cH - tipH;
+
+    // Tooltip bg
+    ctx.fillStyle = isDark ? 'rgba(20,22,40,0.92)' : 'rgba(255,255,255,0.95)';
+    ctx.strokeStyle = isDark ? 'rgba(129,140,248,0.3)' : 'rgba(99,102,241,0.2)';
+    ctx.lineWidth = 1;
+    const tipR = 8;
+    ctx.beginPath();
+    ctx.roundRect(tipX, tipY, tipW, tipH, tipR);
+    ctx.fill();
+    ctx.stroke();
+
+    // Tooltip text
+    ctx.textAlign = 'left';
+    tipLines.forEach((line, li) => {
+      ctx.fillStyle = li === 0 ? textColor : (line.includes('Подозр') ? suspectStroke : (isDark ? '#e2e8f0' : '#1e293b'));
+      ctx.font = li === 0 ? '500 10px Inter, sans-serif' : tipFont;
+      ctx.fillText(line, tipX + 10, tipY + 16 + li * 17);
+    });
   }
 }
 

@@ -998,13 +998,24 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 }
 
 /* ── Activity Chart Widget ── */
-.activity-chart-wrap { padding: 8px 16px; position: relative; }
+.chart-panel { border-image: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(167,139,250,0.1), rgba(239,68,68,0.1)) 1; position: relative; overflow: hidden; }
+.chart-panel::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(99,102,241,0.3), rgba(167,139,250,0.2), transparent); }
+.activity-chart-wrap { padding: 8px 16px 0; position: relative; }
 .activity-chart-wrap canvas { display: block; width: 100%; border-radius: 8px; }
-.chart-legend { display: flex; align-items: center; gap: 20px; padding: 6px 16px 10px; justify-content: center; }
-.chart-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text3); font-weight: 600; }
+.chart-legend { display: flex; align-items: center; gap: 22px; padding: 8px 16px 12px; justify-content: center; }
+.chart-legend-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text2); font-weight: 600; }
+.chart-legend-muted { opacity: 0.6; }
 .chart-dot { width: 8px; height: 8px; border-radius: 50%; }
-.chart-dot-online { background: #6366f1; box-shadow: 0 0 6px rgba(99,102,241,0.4); }
-.chart-dot-suspect { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.4); }
+.chart-dot-online { background: #818cf8; box-shadow: 0 0 8px rgba(129,140,248,0.5); }
+.chart-dot-suspect { background: #f87171; box-shadow: 0 0 8px rgba(248,113,113,0.5); }
+.chart-dot-avg { background: rgba(129,140,248,0.35); border: 1px dashed rgba(129,140,248,0.5); }
+.chart-dot-pulse { animation: legend-pulse 2.5s ease-in-out infinite; }
+@keyframes legend-pulse {
+  0%, 100% { box-shadow: 0 0 4px currentColor; transform: scale(1); }
+  50% { box-shadow: 0 0 12px currentColor; transform: scale(1.2); }
+}
+[data-theme="light"] .chart-dot-online { background: #6366f1; box-shadow: 0 0 6px rgba(99,102,241,0.4); }
+[data-theme="light"] .chart-dot-suspect { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.4); }
 
 /* ── Sound Toggle ── */
 #sound-toggle-btn.sound-on { color: var(--green); }

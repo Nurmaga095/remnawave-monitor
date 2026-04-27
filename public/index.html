@@ -332,9 +332,12 @@
         </div>
 
         <!-- График активности -->
-        <div class="panel-section">
+        <div class="panel-section chart-panel">
           <div class="section-header">
-            <h3>📈 Активность</h3>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <h3>📈 Мониторинг активности</h3>
+              <span class="section-badge" id="chart-data-count">—</span>
+            </div>
             <div class="section-actions">
               <div class="window-switch compact">
                 <button class="active" onclick="setChartRange('6h', this)">6ч</button>
@@ -344,11 +347,12 @@
             </div>
           </div>
           <div class="activity-chart-wrap">
-            <canvas id="activity-chart" height="180"></canvas>
+            <canvas id="activity-chart" height="200"></canvas>
           </div>
           <div class="chart-legend">
-            <span class="chart-legend-item"><span class="chart-dot chart-dot-online"></span> Онлайн</span>
-            <span class="chart-legend-item"><span class="chart-dot chart-dot-suspect"></span> Подозрительные</span>
+            <span class="chart-legend-item"><span class="chart-dot chart-dot-online chart-dot-pulse"></span> Пользователи онлайн</span>
+            <span class="chart-legend-item"><span class="chart-dot chart-dot-suspect chart-dot-pulse"></span> Подозрительные</span>
+            <span class="chart-legend-item chart-legend-muted"><span class="chart-dot chart-dot-avg"></span> Среднее</span>
           </div>
         </div>
 
