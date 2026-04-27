@@ -208,7 +208,7 @@
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <input type="text" id="global-search" placeholder="Поиск по пользователю..." oninput="onSearch(this.value)" />
+            <input type="text" id="global-search" placeholder="Поиск: имя, IP, HWID, страна, ASN..." oninput="onSearch(this.value)" />
           </div>
           <button class="btn-refresh" onclick="manualRefresh()" id="refresh-btn">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -218,6 +218,22 @@
             </svg>
             Обновить
           </button>
+          <div class="export-dropdown" id="export-dropdown">
+            <button class="btn-refresh" onclick="toggleExportMenu()" title="Экспорт">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+            </button>
+            <div class="export-menu" id="export-menu">
+              <div class="export-menu-title">Экспорт данных</div>
+              <a onclick="exportData('suspects','csv')">🚨 Подозрительные (CSV)</a>
+              <a onclick="exportData('incidents','csv')">📋 Инциденты (CSV)</a>
+              <a onclick="exportData('users','json')">👥 Пользователи (JSON)</a>
+              <a onclick="exportData('audit','csv')">📝 Аудит-лог (CSV)</a>
+            </div>
+          </div>
         </div>
       </div>
 

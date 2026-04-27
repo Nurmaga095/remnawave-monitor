@@ -1583,7 +1583,22 @@ function renderSessions() {
 
   if (state.searchQuery) {
     const q = state.searchQuery.toLowerCase();
-    users = users.filter(u => (u.username||'').toLowerCase().includes(q));
+    users = users.filter(u => {
+      // Match username
+      if ((u.username||'').toLowerCase().includes(q)) return true;
+      // Match IP
+      const ips = getIpDetails(u);
+      if (ips.some(d => d.ip && d.ip.includes(q))) return true;
+      // Match country
+      if (ips.some(d => d.geo && ((d.geo.countryCode||'').toLowerCase().includes(q) || (d.geo.country||'').toLowerCase().includes(q)))) return true;
+      // Match ASN / org
+      if (ips.some(d => d.geo && ((d.geo.asn ? String(d.geo.asn) : '').includes(q) || (d.geo.org||'').toLowerCase().includes(q) || (d.geo.isp||'').toLowerCase().includes(q)))) return true;
+      // Match HWID
+      const userKey = getUserKey(u);
+      const devices = (state.hwidDevices && state.hwidDevices[userKey]) || [];
+      if (devices.some(d => (d.hwid||'').toLowerCase().includes(q) || (d.deviceModel||d.model||'').toLowerCase().includes(q))) return true;
+      return false;
+    });
   }
 
   // Country filter
@@ -4003,3 +4018,38 @@ function checkSoundAlerts() {
 }
 
 document.addEventListener('DOMContentLoaded', updateSoundButton);
+
+// ─── Export Data ──────────────────────────────────────────────────
+function toggleExportMenu() {
+  const menu = document.getElementById('export-menu');
+  if (!menu) return;
+  menu.classList.toggle('open');
+  // Close on outside click
+  if (menu.classList.contains('open')) {
+    setTimeout(() => {
+      document.addEventListener('click', closeExportMenuOutside, { once: true });
+    }, 0);
+  }
+}
+
+function closeExportMenuOutside(e) {
+  const dropdown = document.getElementById('export-dropdown');
+  const menu = document.getElementById('export-menu');
+  if (dropdown && !dropdown.contains(e.target) && menu) {
+    menu.classList.remove('open');
+  }
+}
+
+function exportData(type, format) {
+  const menu = document.getElementById('export-menu');
+  if (menu) menu.classList.remove('open');
+  const url = `/api/export?type=${encodeURIComponent(type)}&format=${encodeURIComponent(format)}`;
+  // Use a hidden link to trigger download
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `remnawave-${type}.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  toast(`Экспорт ${type} (${format.toUpperCase()}) начат`, 'ok');
+}

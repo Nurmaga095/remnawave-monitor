@@ -220,6 +220,16 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === '/api/export') {
+      await handleExport(req, res, parsedUrl);
+      return;
+    }
+
+    if (pathname === '/api/audit-log') {
+      await handleAuditLog(req, res);
+      return;
+    }
+
     await serveStatic(req, res, pathname);
   } catch (e) {
     console.error('[server] unexpected error:', e);
@@ -475,6 +485,7 @@ async function handleBan(req, res) {
       // Сохраняем локальный флаг тоже
       if (action === 'ban') store.banUser(userKey, body.reason || null);
       else store.unbanUser(userKey);
+      store.recordAudit(APP_USERNAME, getClientIp(req), action, userKey, { reason: body.reason || null, apiStatus: result.status });
       console.log(`[ban] ${action} user ${userKey}: OK (API ${result.status})`);
       sendJson(res, 200, { ok: true, banned: action === 'ban', apiResponse: result.body });
     } else {
@@ -496,9 +507,11 @@ async function handleWhitelist(req, res) {
 
   if (req.method === 'POST') {
     store.addToWhitelist(userKey, body.note || null);
+    store.recordAudit(APP_USERNAME, getClientIp(req), 'whitelist_add', userKey, { note: body.note || null });
     sendJson(res, 200, { ok: true, whitelisted: true });
   } else if (req.method === 'DELETE') {
     store.removeFromWhitelist(userKey);
+    store.recordAudit(APP_USERNAME, getClientIp(req), 'whitelist_remove', userKey, null);
     sendJson(res, 200, { ok: true, whitelisted: false });
   } else {
     sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST, DELETE' });
@@ -691,10 +704,95 @@ async function handleIncident(req, res) {
       operatorComment: body.operatorComment,
       resolutionReason: body.resolutionReason,
     });
+    store.recordAudit(APP_USERNAME, getClientIp(req), 'incident_update', userKey, {
+      status: body.status,
+      resolutionReason: body.resolutionReason || null,
+    });
     sendJson(res, 200, { ok: true, incident });
   } catch (e) {
     console.error('[incident] update error:', e.message);
     sendJson(res, 400, { error: e.message || 'Failed to update incident' });
+  }
+}
+
+async function handleExport(req, res, parsedUrl) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'GET' });
+    return;
+  }
+
+  const type = parsedUrl.searchParams.get('type') || 'suspects';
+  const format = parsedUrl.searchParams.get('format') || 'json';
+  const validTypes = ['suspects', 'incidents', 'users', 'audit'];
+  if (!validTypes.includes(type)) {
+    sendJson(res, 400, { error: `Invalid type. Use: ${validTypes.join(', ')}` });
+    return;
+  }
+
+  try {
+    const data = store.getExportData(type);
+    store.recordAudit(APP_USERNAME, getClientIp(req), 'export', null, { type, format, count: data.length });
+
+    if (format === 'csv') {
+      const csv = arrayToCsv(data);
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="remnawave-${type}-${new Date().toISOString().slice(0,10)}.csv"`,
+      });
+      res.end(csv);
+    } else {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': `attachment; filename="remnawave-${type}-${new Date().toISOString().slice(0,10)}.json"`,
+      });
+      res.end(JSON.stringify(data, null, 2));
+    }
+  } catch (e) {
+    console.error('[export] error:', e.message);
+    sendJson(res, 500, { error: 'Export failed: ' + e.message });
+  }
+}
+
+function arrayToCsv(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return '';
+  // Collect all keys from all objects
+  const keysSet = new Set();
+  for (const obj of arr) {
+    if (obj && typeof obj === 'object') {
+      for (const k of Object.keys(obj)) keysSet.add(k);
+    }
+  }
+  const keys = [...keysSet];
+  // Filter out complex objects/arrays, stringify them
+  const escape = (val) => {
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'object') return JSON.stringify(val).replace(/"/g, '""');
+    const s = String(val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const header = keys.map(k => escape(k)).join(',');
+  const rows = arr.map(obj => {
+    if (!obj || typeof obj !== 'object') return keys.map(() => '').join(',');
+    return keys.map(k => escape(obj[k])).join(',');
+  });
+  return header + '\n' + rows.join('\n');
+}
+
+async function handleAuditLog(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'GET' });
+    return;
+  }
+
+  try {
+    const logs = store.getAuditLog(500);
+    sendJson(res, 200, { logs });
+  } catch (e) {
+    console.error('[audit-log] error:', e.message);
+    sendJson(res, 500, { error: 'Failed to load audit log' });
   }
 }
 
@@ -1003,6 +1101,21 @@ server.listen(PORT, HOST, () => {
     console.log(`  SQLite cache: ${store.dbPath}`);
     console.log(`  Sync interval: ${SYNC_INTERVAL_SECONDS}s`);
   }
+
+  // Auto-backup: daily at 03:00
+  function scheduleBackup() {
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(3, 0, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    const delay = next - now;
+    setTimeout(() => {
+      store.createBackup();
+      setInterval(() => store.createBackup(), 24 * 60 * 60 * 1000);
+    }, delay);
+    console.log(`  Auto-backup: next at ${next.toISOString().slice(0, 16)}`);
+  }
+  scheduleBackup();
 });
 
 // ─── Graceful Shutdown ────────────────────────────────────────────

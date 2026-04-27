@@ -1009,3 +1009,15 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 /* ── Sound Toggle ── */
 #sound-toggle-btn.sound-on { color: var(--green); }
 #sound-toggle-btn.sound-on svg { color: var(--green); }
+
+/* ── Export Dropdown ── */
+.export-dropdown { position: relative; display: inline-block; }
+.export-menu { display: none; position: absolute; right: 0; top: calc(100% + 6px); background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); min-width: 220px; z-index: 100; overflow: hidden; }
+.export-menu.open { display: block; animation: fadeIn 0.15s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+.export-menu-title { padding: 10px 14px; font-size: 11px; font-weight: 800; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--border); }
+.export-menu a { display: block; padding: 10px 14px; font-size: 13px; color: var(--text2); cursor: pointer; transition: all 0.1s; text-decoration: none; }
+.export-menu a:hover { background: rgba(99,102,241,0.08); color: var(--accent); }
+
+/* ── Search input wider ── */
+.search-box input { width: 260px; }

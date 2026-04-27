@@ -185,6 +185,17 @@ function createStore(options = {}) {
     CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
     CREATE INDEX IF NOT EXISTS idx_incidents_user ON incidents(user_key);
     CREATE INDEX IF NOT EXISTS idx_incident_events_user_ts ON incident_events(user_key, ts);
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,
+      operator TEXT,
+      client_ip TEXT,
+      action TEXT NOT NULL,
+      target_user TEXT,
+      details_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
   `);
 
   const setMetaStmt = db.prepare(`
@@ -1488,6 +1499,70 @@ function createStore(options = {}) {
     };
   }
 
+  // ── Audit Log ──
+  function recordAudit(operator, clientIp, action, targetUser, details) {
+    db.prepare('INSERT INTO audit_log (ts, operator, client_ip, action, target_user, details_json) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(Date.now(), operator || null, clientIp || null, action, targetUser || null, details ? JSON.stringify(details) : null);
+  }
+  function getAuditLog(limit = 200) {
+    return db.prepare('SELECT id, ts, operator, client_ip, action, target_user, details_json FROM audit_log ORDER BY ts DESC LIMIT ?').all(Number(limit || 200))
+      .map(r => ({
+        id: r.id,
+        ts: r.ts,
+        operator: r.operator,
+        clientIp: r.client_ip,
+        action: r.action,
+        targetUser: r.target_user,
+        details: parseJson(r.details_json),
+      }));
+  }
+
+  // ── Export Data ──
+  function getExportData(type) {
+    if (type === 'suspects') {
+      const detection = getDetectionResult();
+      if (!detection) return [];
+      return [...(detection.suspects || []), ...(detection.observed || [])];
+    }
+    if (type === 'incidents') {
+      return getIncidents(1000);
+    }
+    if (type === 'users') {
+      return db.prepare('SELECT raw_json FROM users ORDER BY updated_at DESC').all()
+        .map(r => parseJson(r.raw_json)).filter(Boolean);
+    }
+    if (type === 'audit') {
+      return getAuditLog(1000);
+    }
+    return [];
+  }
+
+  // ── DB Backup ──
+  function createBackup() {
+    const backupDir = path.join(path.dirname(dbPath), 'backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+    const date = new Date().toISOString().slice(0, 10);
+    const backupPath = path.join(backupDir, `monitor-${date}.sqlite`);
+    db.backup(backupPath).then(() => {
+      console.log(`[backup] saved: ${backupPath}`);
+      // Rotate: keep only last 7
+      try {
+        const files = fs.readdirSync(backupDir)
+          .filter(f => f.startsWith('monitor-') && f.endsWith('.sqlite'))
+          .sort();
+        while (files.length > 7) {
+          const old = files.shift();
+          fs.unlinkSync(path.join(backupDir, old));
+          console.log(`[backup] rotated: ${old}`);
+        }
+      } catch (e) {
+        console.error('[backup] rotation error:', e.message);
+      }
+    }).catch(err => {
+      console.error('[backup] error:', err.message);
+    });
+  }
+
   // VPN/Proxy detection
   const ipChecker = createIpChecker(db);
 
@@ -1496,6 +1571,7 @@ function createStore(options = {}) {
 
   return {
     dbPath,
+    db,
     saveSnapshot: saveSnapshotTx,
     saveIpGeoCache: saveIpGeoCacheTx,
     getIpGeoCache,
@@ -1525,6 +1601,10 @@ function createStore(options = {}) {
     saveNotification,
     getNotifications,
     getAllNotificationCounts,
+    recordAudit,
+    getAuditLog,
+    getExportData,
+    createBackup,
     ipChecker,
     ruleEngine,
   };
