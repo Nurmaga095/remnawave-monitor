@@ -2904,8 +2904,8 @@ function suspectCardHtml(u) {
   const cardKey = getUserKey(u);
   const serverResult = getServerDetectionForUser(u);
   const riskScore = serverResult ? (serverResult.riskScore || 0) : (u._riskScore || 0);
-  const riskLevel = serverResult ? (serverResult.riskLevel || 'clean') : (hwidOver ? 'critical' : 'clean');
   const hwidOver = hwid > limit;
+  const riskLevel = serverResult ? (serverResult.riskLevel || 'clean') : (hwidOver ? 'critical' : 'clean');
 
   // Reasons (short chips)
   const reasons = [];
