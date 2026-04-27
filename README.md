@@ -95,7 +95,7 @@ No external frameworks required. Pure Node.js + vanilla JavaScript. Single depen
 The interactive installer will guide you through the entire setup:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/remnawave-monitor.git
+git clone https://github.com/Nurmaga095/remnawave-monitor.git
 cd remnawave-monitor
 sudo chmod +x setup.sh
 sudo ./setup.sh
@@ -115,7 +115,7 @@ The installer will:
 ### Manual Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/remnawave-monitor.git
+git clone https://github.com/Nurmaga095/remnawave-monitor.git
 cd remnawave-monitor
 cp .env.example .env
 npm install --omit=dev
@@ -170,7 +170,7 @@ sudo apt install -y caddy
 #### 2. Deploy the application
 
 ```bash
-sudo git clone https://github.com/YOUR_USERNAME/remnawave-monitor.git /opt/remnawave-monitor
+sudo git clone https://github.com/Nurmaga095/remnawave-monitor.git /opt/remnawave-monitor
 cd /opt/remnawave-monitor
 sudo cp .env.example .env
 sudo nano .env  # fill in your values
