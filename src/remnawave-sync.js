@@ -111,6 +111,20 @@ function createRemnawaveSync(options) {
         console.error('[ip-check] error:', ipCheckErr.message);
       }
 
+      // Fetch subscription request history for User-Agent analysis
+      try {
+        if (store.saveSubHistory) {
+          const subRecords = await fetchSubRequestHistory(warnings);
+          if (subRecords.length > 0) {
+            const inserted = store.saveSubHistory(subRecords);
+            if (inserted > 0) console.log(`[sub-history] saved ${inserted} new subscription requests`);
+          }
+        }
+      } catch (subErr) {
+        warnings.push(`sub-history error: ${subErr.message}`);
+        console.error('[sub-history] error:', subErr.message);
+      }
+
       store.saveSnapshot({
         ts: Date.now(),
         users,
@@ -176,6 +190,20 @@ function createRemnawaveSync(options) {
     } catch (e) {
       store.finishSyncRun(runId, 'error', e.message, nextSyncAt);
       throw e;
+    }
+  }
+  async function fetchSubRequestHistory(warnings) {
+    try {
+      const response = await request('GET', '/api/subscription-request-history', null, { allow404: true });
+      if (response.statusCode === 404) return [];
+      const data = response.json;
+      const records = (data && data.response && Array.isArray(data.response.records))
+        ? data.response.records
+        : extractArray(data, ['records']);
+      return records;
+    } catch (e) {
+      warnings.push(`sub-history fetch: ${e.message}`);
+      return [];
     }
   }
 

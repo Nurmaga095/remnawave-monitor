@@ -196,6 +196,19 @@ function createStore(options = {}) {
       details_json TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
+
+    CREATE TABLE IF NOT EXISTS sub_request_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_key TEXT NOT NULL,
+      request_at INTEGER NOT NULL,
+      request_ip TEXT,
+      user_agent TEXT,
+      platform TEXT,
+      app_version TEXT,
+      build_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sub_history_user ON sub_request_history(user_key);
+    CREATE INDEX IF NOT EXISTS idx_sub_history_ts ON sub_request_history(request_at);
   `);
 
   const setMetaStmt = db.prepare(`
@@ -444,6 +457,7 @@ function createStore(options = {}) {
       relations: buildRelationGraph(users, geoByIp, activeIpWindows['30']),
       proxyData: ipChecker.getAllCached(),
       nodeMap: getMeta('node_map', {}),
+      subHistory: getSubHistoryGrouped(),
     };
   }
 
@@ -1580,6 +1594,142 @@ function createStore(options = {}) {
   // Rule Engine
   const ruleEngine = createRuleEngine(db);
 
+  // ─── Subscription Request History ────────────────────────────
+  function parseSubUserAgent(ua) {
+    if (!ua) return { platform: null, appVersion: null, buildId: null };
+    // Format: "Happ/4.8.3/ios/2604271944525" or "v2rayNG/1.8.x" etc
+    const parts = String(ua).split('/');
+    if (parts.length >= 4) {
+      return {
+        platform: parts[2] ? parts[2].toLowerCase() : null,
+        appVersion: parts[1] || null,
+        buildId: parts[3] || null,
+      };
+    }
+    if (parts.length >= 2) {
+      return {
+        platform: parts[0] ? parts[0].toLowerCase() : null,
+        appVersion: parts[1] || null,
+        buildId: null,
+      };
+    }
+    return { platform: ua.toLowerCase(), appVersion: null, buildId: null };
+  }
+
+  const saveSubHistoryTx = db.transaction((records) => {
+    const insert = db.prepare(`
+      INSERT OR IGNORE INTO sub_request_history
+        (user_key, request_at, request_ip, user_agent, platform, app_version, build_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    // Keep last known max id to avoid duplicates
+    const maxRow = db.prepare('SELECT MAX(request_at) as max_ts FROM sub_request_history').get();
+    const maxTs = maxRow && maxRow.max_ts ? maxRow.max_ts : 0;
+
+    let inserted = 0;
+    for (const rec of records) {
+      if (!rec.userUuid) continue;
+      const ts = new Date(rec.requestAt).getTime();
+      if (!Number.isFinite(ts) || ts <= maxTs) continue;
+      const parsed = parseSubUserAgent(rec.userAgent);
+      insert.run(
+        rec.userUuid,
+        ts,
+        rec.requestIp || null,
+        rec.userAgent || null,
+        parsed.platform,
+        parsed.appVersion,
+        parsed.buildId
+      );
+      inserted++;
+    }
+    return inserted;
+  });
+
+  function saveSubHistory(records) {
+    if (!Array.isArray(records) || records.length === 0) return 0;
+    return saveSubHistoryTx(records);
+  }
+
+  function getSubHistoryGrouped() {
+    // Return per-user analysis of subscription requests (last 7 days)
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const rows = db.prepare(`
+      SELECT user_key, request_ip, user_agent, platform, app_version, build_id, request_at
+      FROM sub_request_history
+      WHERE request_at >= ?
+      ORDER BY user_key, request_at DESC
+    `).all(cutoff);
+
+    const byUser = {};
+    for (const row of rows) {
+      if (!byUser[row.user_key]) {
+        byUser[row.user_key] = {
+          platforms: new Set(),
+          appVersions: new Set(),
+          buildIds: new Set(),
+          ips: new Set(),
+          userAgents: new Set(),
+          records: [],
+        };
+      }
+      const u = byUser[row.user_key];
+      if (row.platform) u.platforms.add(row.platform);
+      if (row.app_version) u.appVersions.add(row.app_version);
+      if (row.build_id) u.buildIds.add(row.build_id);
+      if (row.request_ip) u.ips.add(row.request_ip);
+      if (row.user_agent) u.userAgents.add(row.user_agent);
+      if (u.records.length < 24) {
+        u.records.push({
+          ts: row.request_at,
+          ip: row.request_ip,
+          ua: row.user_agent,
+          platform: row.platform,
+          version: row.app_version,
+          buildId: row.build_id,
+        });
+      }
+    }
+
+    const result = {};
+    for (const [key, data] of Object.entries(byUser)) {
+      result[key] = {
+        platformCount: data.platforms.size,
+        platforms: Array.from(data.platforms),
+        appVersionCount: data.appVersions.size,
+        appVersions: Array.from(data.appVersions),
+        buildIdCount: data.buildIds.size,
+        buildIds: Array.from(data.buildIds),
+        ipCount: data.ips.size,
+        ips: Array.from(data.ips).slice(0, 10),
+        userAgentCount: data.userAgents.size,
+        userAgents: Array.from(data.userAgents).slice(0, 10),
+        requestCount: data.records.length,
+        records: data.records.slice(0, 12),
+      };
+    }
+    return result;
+  }
+
+  function getSubHistoryForUser(userKey) {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return db.prepare(`
+      SELECT request_at as ts, request_ip as ip, user_agent as ua,
+             platform, app_version as version, build_id as buildId
+      FROM sub_request_history
+      WHERE user_key = ? AND request_at >= ?
+      ORDER BY request_at DESC
+      LIMIT 50
+    `).all(userKey, cutoff);
+  }
+
+  // Cleanup old sub history (30 days)
+  function cleanupSubHistory() {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    db.prepare('DELETE FROM sub_request_history WHERE request_at < ?').run(cutoff);
+  }
+
   return {
     dbPath,
     db,
@@ -1616,6 +1766,9 @@ function createStore(options = {}) {
     getAuditLog,
     getExportData,
     createBackup,
+    saveSubHistory,
+    getSubHistoryForUser,
+    cleanupSubHistory,
     ipChecker,
     ruleEngine,
   };

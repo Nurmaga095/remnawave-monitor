@@ -1,11 +1,12 @@
-// ─── Server-side Detection Module v5 — Premium Multi-Signal ────
-// 12 сигналов, 4 категории, 4 уровня:
+// ─── Server-side Detection Module v6 — Premium Multi-Signal ────
+// 13 сигналов, 4 категории, 4 уровня:
 //
 // DETERMINISTIC: hwid_over_limit
 // STRONG: hwid_churn, temporal_247, multi_city, impossible_travel, velocity_extreme,
 //         fingerprint_cluster, simultaneous_distinct_networks, extracted_key_suspected,
-//         multi_node_simultaneous
-// WEAK: suspicious_travel, velocity_high, fingerprint_match, isp_mix, behavior_shift
+//         multi_node_simultaneous, multi_platform_sub
+// WEAK: suspicious_travel, velocity_high, fingerprint_match, isp_mix, behavior_shift,
+//       multi_device_sub, schedule_pattern
 //
 // critical (60-100) — HWID > лимит
 // high     (40-59)  — 2+ strong сигнала
@@ -163,6 +164,10 @@ function createDetector(options = {}) {
     // ═══ WEAK: Schedule Pattern Detection (#10) ═══
     const scheduleSignal = detectSchedulePattern(u, state, keys, hwidLimit);
     if (scheduleSignal) signals.push(scheduleSignal);
+
+    // ═══ STRONG: Multi-Platform Subscription (#11) ═══
+    const subPlatformSignal = detectMultiPlatformSub(u, state, keys);
+    if (subPlatformSignal) signals.push(subPlatformSignal);
 
     const context = buildContext(u, state);
     return { signals, context };
@@ -839,6 +844,60 @@ function createDetector(options = {}) {
 
     return null;
   }
+
+  // ─── #11 Multi-Platform Subscription Detection ──────────────
+  function detectMultiPlatformSub(u, state, keys) {
+    const subHistory = state.subHistory;
+    if (!subHistory) return null;
+
+    // Find sub history for any of user's aliases
+    let hist = null;
+    for (const key of keys) {
+      if (subHistory[key]) { hist = subHistory[key]; break; }
+    }
+    if (!hist) return null;
+
+    // Check for different OS platforms (strongest signal)
+    const platforms = hist.platforms || [];
+    const MOBILE_PLATFORMS = ['ios', 'android'];
+    const mobilePlatforms = platforms.filter(p => MOBILE_PLATFORMS.includes(p));
+    const desktopPlatforms = platforms.filter(p => !MOBILE_PLATFORMS.includes(p) && p !== 'happ');
+
+    // iOS + Android = strong sharing signal
+    if (mobilePlatforms.length >= 2) {
+      return {
+        id: 'multi_platform_sub', category: 'strong', active: true, points: 30,
+        reason: `подписка с разных ОС: ${platforms.join(', ')} (${hist.buildIdCount} устройств)`,
+      };
+    }
+
+    // Mobile + Desktop = strong sharing signal
+    if (mobilePlatforms.length >= 1 && desktopPlatforms.length >= 1) {
+      return {
+        id: 'multi_platform_sub', category: 'strong', active: true, points: 25,
+        reason: `подписка с мобильной и десктопной ОС: ${platforms.join(', ')}`,
+      };
+    }
+
+    // Many unique buildIds on same platform = possible sharing
+    const buildIds = hist.buildIds || [];
+    if (buildIds.length >= 4) {
+      return {
+        id: 'multi_device_sub', category: 'strong', active: true, points: 20,
+        reason: `${buildIds.length} разных устройств обновляют подписку (${platforms.join(', ')})`,
+      };
+    }
+
+    if (buildIds.length >= 3) {
+      return {
+        id: 'multi_device_sub', category: 'weak', active: true, points: 10,
+        reason: `${buildIds.length} разных устройств обновляют подписку`,
+      };
+    }
+
+    return null;
+  }
+
   function buildContext(u, state) {
     const keys = getUserAliases(u);
     let ipCount = 0;

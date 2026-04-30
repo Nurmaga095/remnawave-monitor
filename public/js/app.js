@@ -2001,6 +2001,77 @@ function renderInvestigationTab(data, userKey) {
     </div>`);
   }
 
+  // Subscription request history (loaded async)
+  const subHistId = `sub-hist-${Date.now()}`;
+  parts.push(`<div class="inv-section">
+    <div class="inv-section-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> История запросов подписки</div>
+    <div id="${subHistId}" class="inv-sub-history"><span class="inv-loading">Загрузка…</span></div>
+  </div>`);
+  // Load sub history async
+  setTimeout(async () => {
+    const el = document.getElementById(subHistId);
+    if (!el) return;
+    try {
+      const resp = await fetch('/api/sub-history?userKey=' + encodeURIComponent(userKey));
+      const data = await resp.json();
+      const records = data.records || [];
+      if (records.length === 0) {
+        el.innerHTML = '<div class="inv-sub-empty">Нет данных о запросах подписки</div>';
+        return;
+      }
+      // Analyze platforms
+      const platforms = new Set();
+      const buildIds = new Set();
+      const userAgents = new Set();
+      const ips = new Set();
+      for (const r of records) {
+        if (r.platform) platforms.add(r.platform);
+        if (r.buildId) buildIds.add(r.buildId);
+        if (r.ua) userAgents.add(r.ua);
+        if (r.ip) ips.add(r.ip);
+      }
+      const hasMixedPlatforms = platforms.size >= 2;
+
+      let html = '<div class="inv-sub-stats">';
+      html += '<div class="inv-sub-stat' + (hasMixedPlatforms ? ' inv-sub-danger' : '') + '"><span class="inv-sub-stat-num">' + platforms.size + '</span><span class="inv-sub-stat-lbl">Платформ</span></div>';
+      html += '<div class="inv-sub-stat' + (buildIds.size > 3 ? ' inv-sub-warn' : '') + '"><span class="inv-sub-stat-num">' + buildIds.size + '</span><span class="inv-sub-stat-lbl">Устройств</span></div>';
+      html += '<div class="inv-sub-stat"><span class="inv-sub-stat-num">' + ips.size + '</span><span class="inv-sub-stat-lbl">IP</span></div>';
+      html += '<div class="inv-sub-stat"><span class="inv-sub-stat-num">' + records.length + '</span><span class="inv-sub-stat-lbl">Запросов</span></div>';
+      html += '</div>';
+
+      if (hasMixedPlatforms) {
+        html += '<div class="inv-sub-alert">⚠️ Обнаружены разные ОС: <b>' + [...platforms].join(', ') + '</b> — признак шаринга ключа</div>';
+      }
+
+      // Platform badges
+      html += '<div class="inv-sub-platforms">';
+      for (const p of platforms) {
+        const icon = p === 'ios' ? '🍎' : p === 'android' ? '🤖' : p === 'windows' ? '🖥️' : p === 'macos' ? '💻' : '📱';
+        html += '<span class="inv-sub-platform-badge">' + icon + ' ' + esc(p) + '</span>';
+      }
+      html += '</div>';
+
+      // Recent records table
+      html += '<div class="inv-sub-records">';
+      for (const r of records.slice(0, 12)) {
+        const date = new Date(r.ts);
+        const timeStr = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        const dateStr = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+        const platIcon = r.platform === 'ios' ? '🍎' : r.platform === 'android' ? '🤖' : '📱';
+        html += '<div class="inv-sub-record">';
+        html += '<span class="inv-sub-rec-time">' + dateStr + ' ' + timeStr + '</span>';
+        html += '<span class="inv-sub-rec-plat">' + platIcon + ' ' + esc(r.platform || '?') + '</span>';
+        html += '<span class="inv-sub-rec-ip">' + esc(r.ip || '') + '</span>';
+        html += '<span class="inv-sub-rec-ua" title="' + escAttr(r.ua || '') + '">' + esc((r.ua || '').substring(0, 40)) + '</span>';
+        html += '</div>';
+      }
+      html += '</div>';
+      el.innerHTML = html;
+    } catch (e) {
+      el.innerHTML = '<div class="inv-sub-empty">Ошибка загрузки: ' + esc(e.message) + '</div>';
+    }
+  }, 100);
+
   // Audit log
   if (data.auditLog && data.auditLog.length > 0) {
     parts.push(renderAuditLog(data.auditLog));
@@ -2056,6 +2127,12 @@ function renderInvestigationEvents(events) {
     isp_datacenter_heavy: '🏢 Datacenter IP',
     isp_mix: '🏢 Микс ISP типов',
     behavior_shift: '📊 Смена поведения',
+    simultaneous_distinct_networks: '🔀 Одновременные разные сети',
+    extracted_key_suspected: '🔑 Подозрение на извлечённый ключ',
+    multi_node_simultaneous: '🌐 Мульти-нода одновременно',
+    schedule_pattern: '📅 Расписание по паттерну',
+    multi_platform_sub: '📱 Разные ОС в подписке',
+    multi_device_sub: '📲 Много устройств в подписке',
   };
   const categoryLabels = {
     deterministic: 'крит.',
@@ -2213,6 +2290,8 @@ function userCardHtml(u) {
         extracted_key_suspected: 'Подозрение: ключ извлечён',
         multi_node_simultaneous: 'Мульти-нодовое использование',
         schedule_pattern: 'Паттерн по расписанию',
+        multi_platform_sub: 'Разные ОС в подписке',
+        multi_device_sub: 'Много устройств в подписке',
       };
 
       const titleText = signalTitles[s.id] || s.reason || s.id;

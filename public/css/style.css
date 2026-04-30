@@ -1206,3 +1206,41 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 
 /* ── Search input wider ── */
 .search-box input { width: 260px; }
+
+/* ── Subscription History in Investigation Tab ── */
+.inv-sub-history { margin-top: 4px; }
+.inv-sub-empty { color: var(--text3); font-size: 12px; padding: 12px 0; text-align: center; }
+.inv-loading { color: var(--text3); font-size: 12px; }
+.inv-sub-stats { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.inv-sub-stat {
+  flex: 1; min-width: 60px; text-align: center; padding: 8px 6px;
+  background: var(--bg3); border-radius: var(--radius-sm); border: 1px solid var(--border);
+}
+.inv-sub-stat-num { display: block; font-size: 18px; font-weight: 700; color: var(--text); }
+.inv-sub-stat-lbl { display: block; font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+.inv-sub-danger { border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.06); }
+.inv-sub-danger .inv-sub-stat-num { color: var(--red); }
+.inv-sub-warn { border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.06); }
+.inv-sub-warn .inv-sub-stat-num { color: var(--yellow); }
+.inv-sub-alert {
+  padding: 8px 12px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600;
+  background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.2); color: var(--red);
+  margin-bottom: 10px;
+}
+.inv-sub-platforms { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.inv-sub-platform-badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px;
+  background: var(--bg4); border: 1px solid var(--border2); border-radius: 20px;
+  font-size: 12px; font-weight: 600; color: var(--text); text-transform: capitalize;
+}
+.inv-sub-records { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.inv-sub-record {
+  display: grid; grid-template-columns: 80px 72px 120px 1fr; gap: 8px; align-items: center;
+  padding: 5px 8px; border-radius: var(--radius-sm); font-size: 11px;
+  background: var(--bg3); border: 1px solid var(--border);
+}
+.inv-sub-record:hover { background: var(--bg4); }
+.inv-sub-rec-time { color: var(--text3); font-variant-numeric: tabular-nums; }
+.inv-sub-rec-plat { color: var(--accent); font-weight: 600; }
+.inv-sub-rec-ip { color: var(--text2); font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+.inv-sub-rec-ua { color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }

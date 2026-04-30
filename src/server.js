@@ -170,6 +170,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === '/api/sub-history') {
+      await handleSubHistory(req, res);
+      return;
+    }
+
     if (pathname === '/api/notify-user') {
       await handleNotifyUser(req, res);
       return;
@@ -548,6 +553,24 @@ async function handleUserHistory(req, res) {
   } catch (e) {
     console.error('[history] error:', e.message);
     sendJson(res, 500, { error: 'Failed to load history' });
+  }
+}
+
+async function handleSubHistory(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'GET' });
+    return;
+  }
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const userKey = url.searchParams.get('userKey') || '';
+  if (!userKey) { sendJson(res, 400, { error: 'userKey is required' }); return; }
+  try {
+    const records = store.getSubHistoryForUser(userKey);
+    sendJson(res, 200, { records });
+  } catch (e) {
+    console.error('[sub-history] error:', e.message);
+    sendJson(res, 500, { error: 'Failed to load subscription history' });
   }
 }
 
