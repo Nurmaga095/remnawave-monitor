@@ -3257,11 +3257,23 @@ const INCIDENT_REASON_LABELS = {
   hwid_churn_high: 'Частая ротация устройств',
   hwid_churn_moderate: 'Повышенная ротация устройств',
   temporal_247: 'Активность почти 24/7',
-  server_detection: 'Сработала серверная детекция',
-  simultaneous_distinct_networks: 'Одновременные разные сети (IP overlap)',
+  multi_city_extreme: 'Одновременно из 3+ городов',
+  multi_city_suspect: 'Одновременно из 2 городов',
+  impossible_travel: 'Невозможное перемещение',
+  suspicious_travel: 'Подозрительное перемещение',
+  velocity_extreme: 'Экстремальный трафик',
+  velocity_high: 'Высокий трафик',
+  fingerprint_cluster: 'Кластер HWID (мульти-аккаунт)',
+  fingerprint_match: 'Совпадение HWID с другим аккаунтом',
+  shared_ip_cluster: 'Общий IP-кластер',
+  isp_datacenter_heavy: 'Множество VPN/Proxy IP',
+  isp_mix: 'Микс типов провайдеров',
+  behavior_shift: 'Резкая смена поведения',
+  simultaneous_distinct_networks: 'Одновременные разные сети',
   extracted_key_suspected: 'Подозрение на извлечённый ключ',
   multi_node_simultaneous: 'Мульти-нодовое использование (сверх лимита)',
   schedule_pattern: 'Паттерн по расписанию (разные ASN по времени суток)',
+  server_detection: 'Сработала серверная детекция',
 };
 
 function incidentRiskLabel(score) {
@@ -3289,12 +3301,26 @@ function humanIncidentReason(value) {
   if (INCIDENT_REASON_LABELS[key]) return INCIDENT_REASON_LABELS[key];
   const normalized = key.toLowerCase();
   if (normalized.includes('hwid') && normalized.includes('лимит')) return 'Превышен лимит HWID-устройств';
+  if (normalized.includes('hwid') && normalized.includes('churn')) return 'Ротация устройств';
   if (normalized.includes('hwid')) return 'Подозрительная активность устройств';
+  if (normalized.includes('fingerprint') && normalized.includes('cluster')) return 'Кластер HWID (мульти-аккаунт)';
+  if (normalized.includes('fingerprint')) return 'Совпадение HWID';
+  if (normalized.includes('impossible') || normalized.includes('невозмож')) return 'Невозможное перемещение';
+  if (normalized.includes('travel') || normalized.includes('перемещ')) return 'Подозрительное перемещение';
+  if (normalized.includes('velocity') || normalized.includes('трафик')) return 'Аномальный трафик';
+  if (normalized.includes('temporal') || normalized.includes('247') || normalized.includes('24/7')) return 'Активность 24/7';
+  if (normalized.includes('multi_city') || normalized.includes('город')) return 'Одновременно из разных городов';
+  if (normalized.includes('multi_node') || normalized.includes('нод')) return 'Мульти-нодовое использование';
+  if (normalized.includes('simultaneous') || normalized.includes('одноврем')) return 'Одновременные разные сети';
+  if (normalized.includes('extracted') || normalized.includes('извлеч')) return 'Подозрение на извлечённый ключ';
+  if (normalized.includes('schedule') || normalized.includes('расписан')) return 'Паттерн по расписанию';
+  if (normalized.includes('behavior') || normalized.includes('поведен')) return 'Смена поведения';
+  if (normalized.includes('isp') || normalized.includes('datacenter')) return 'Подозрительный тип сети';
   if (normalized.includes('network') || normalized.includes('сет')) return 'Необычно много разных сетей';
-  if (normalized.includes('asn') || normalized.includes('провайдер')) return 'Необычно много провайдеров/ASN';
+  if (normalized.includes('asn') || normalized.includes('провайдер')) return 'Необычно много провайдеров';
   if (normalized.includes('country') || normalized.includes('стран')) return 'Необычная география подключений';
-  if (normalized.includes('traffic') || normalized.includes('трафик')) return 'Аномальный трафик';
   if (normalized.includes('ip')) return 'Подозрительная IP-активность';
+  // Final fallback — replace underscores with spaces
   return key.replace(/_/g, ' ');
 }
 
