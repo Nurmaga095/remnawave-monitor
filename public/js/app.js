@@ -1604,7 +1604,7 @@ function renderDashboard() {
         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>
       </svg><p>Аномалий не обнаружено</p></div>`;
   } else {
-    anomEl.innerHTML = `<div class="sus-grid">${suspects.slice(0, 6).map(s => suspectCardHtml(s)).join('')}</div>`;
+    anomEl.innerHTML = suspectTableHtml(suspects.slice(0, 6));
   }
 
   // Connection map
@@ -1680,7 +1680,19 @@ function renderSessions() {
     el.innerHTML = '<div class="empty-state"><p>Нет данных / пусто</p></div>';
     return;
   }
-  el.innerHTML = users.map(u => sessionCardHtml(u)).join('');
+  el.innerHTML = `<div class="incident-table-wrap">
+    <table class="incident-table">
+      <thead><tr>
+        <th>Пользователь</th>
+        <th>Статус</th>
+        <th>HWID</th>
+        <th>IP</th>
+        <th>Риск</th>
+        <th></th>
+      </tr></thead>
+      <tbody>${users.map(u => sessionRowHtml(u)).join('')}</tbody>
+    </table>
+  </div>`;
 }
 
 function filterByCountry(value) {
@@ -1756,6 +1768,54 @@ function sessionCardHtml(u) {
     ${ipDetails.length > 0 ? `<div class="sc-ips">${topIps}${moreCount}</div>` : ''}
     ${statusHtml}
   </div>`;
+}
+
+function sessionRowHtml(u) {
+  const name = u.username || u.name || 'Unknown';
+  const initials = name.substring(0, 2).toUpperCase();
+  const ipDetails = getIpDetails(u);
+  const hwid = hwidCountForUser(u);
+  const isSusp = isSuspicious(u);
+  const isWatch = !isSusp && isUnderObservation(u);
+  const userKey = getUserKey(u);
+  const hwidLimit = getUserHwidLimit(u);
+  const hwidOver = hwid > hwidLimit;
+  const serverResult = getServerDetectionForUser(u);
+  const riskScore = serverResult ? (serverResult.riskScore || 0) : 0;
+  const riskCls = riskScore >= 80 ? 'risk-critical' : riskScore >= 60 ? 'risk-high' : riskScore >= 40 ? 'risk-warn' : 'risk-info';
+
+  // Status
+  const isBanned = !!(state.data && state.data.bannedUsers && state.data.bannedUsers[userKey]);
+  const isWL = !!(state.data && state.data.whitelist && state.data.whitelist.find(w => w.userKey === userKey));
+  let statusHtml = '';
+  if (isBanned) statusHtml = '<span class="incident-status incident-status-banned">Бан</span>';
+  else if (isWL) statusHtml = '<span class="incident-status incident-status-resolved">WL</span>';
+  else if (isSusp) statusHtml = '<span class="incident-status incident-status-new">Подозрит.</span>';
+  else if (isWatch) statusHtml = '<span class="incident-status incident-status-reviewing">Наблюд.</span>';
+  else statusHtml = `<span class="incident-status incident-status-resolved">${esc(localizeStatus(u.status))}</span>`;
+
+  return `<tr class="incident-row ${isSusp ? 'incident-row-new' : isWatch ? 'incident-row-reviewing' : ''}" onclick="openUserCard('${escAttr(userKey)}')" style="cursor:pointer">
+    <td class="incident-td-user">
+      <div class="incident-user-cell">
+        <div class="sc-avatar ${isSusp ? 'danger-avatar' : isWatch ? 'warning-avatar' : ''}" style="width:30px;height:30px;font-size:11px;border-radius:8px">${esc(initials)}</div>
+        <div>
+          <div class="incident-cell-name">${esc(name)}</div>
+        </div>
+      </div>
+    </td>
+    <td>${statusHtml}</td>
+    <td><span ${hwidOver ? 'class="incident-reason-chip" style="background:rgba(239,68,68,0.12);color:var(--red)"' : ''}>${hwid}/${hwidLimit}</span></td>
+    <td>${ipDetails.length}</td>
+    <td class="incident-td-risk">
+      ${riskScore > 0 ? `<div class="incident-risk-cell ${riskCls}">
+        <span class="incident-risk-num">${riskScore}</span>
+        <div class="incident-risk-bar"><div class="incident-risk-fill" style="width:${Math.min(100, riskScore)}%"></div></div>
+      </div>` : '<span style="color:var(--text3)">—</span>'}
+    </td>
+    <td class="incident-td-actions">
+      <button class="btn-sm" onclick="event.stopPropagation();openUserCard('${escAttr(userKey)}')">${IC._s('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>', 14)}</button>
+    </td>
+  </tr>`;
 }
 
 function toggleExpand(id) {
@@ -3490,11 +3550,27 @@ function renderSuspects() {
       if (clusters.length > 0) {
         html += `<div class="clusters-header" style="margin-top:20px">${IC.users} <span>Остальные подозрительные</span><span class="section-badge">${unclustered.length}</span></div>`;
       }
-      html += `<div class="sus-grid">${unclustered.map(u => suspectCardHtml(u)).join('')}</div>`;
+      html += suspectTableHtml(unclustered);
     }
 
     el.innerHTML = html;
   }
+}
+
+function suspectTableHtml(users) {
+  return `<div class="incident-table-wrap">
+    <table class="incident-table">
+      <thead><tr>
+        <th>Пользователь</th>
+        <th>Риск</th>
+        <th>HWID</th>
+        <th>IP</th>
+        <th>Сигналы</th>
+        <th></th>
+      </tr></thead>
+      <tbody>${users.map(u => suspectRowHtml(u)).join('')}</tbody>
+    </table>
+  </div>`;
 }
 
 // Build clusters: group suspects who share HWID/IP patterns
@@ -3573,11 +3649,11 @@ function clusterGroupHtml(cluster) {
       </div>
       ${cluster.detail ? `<div class="cluster-group-detail">${esc(cluster.detail)}</div>` : ''}
     </div>
-    <div class="sus-grid">${cluster.members.map(u => suspectCardHtml(u)).join('')}</div>
+    ${suspectTableHtml(cluster.members)}
   </div>`;
 }
 
-function suspectCardHtml(u) {
+function suspectRowHtml(u) {
   const name = u.username || u.name || 'Unknown';
   const initials = name.substring(0, 2).toUpperCase();
   const ipDetails = getIpDetails(u);
@@ -3587,47 +3663,48 @@ function suspectCardHtml(u) {
   const serverResult = getServerDetectionForUser(u);
   const riskScore = serverResult ? (serverResult.riskScore || 0) : (u._riskScore || 0);
   const hwidOver = hwid > limit;
-  const riskLevel = serverResult ? (serverResult.riskLevel || 'clean') : (hwidOver ? 'critical' : 'clean');
+  const riskCls = riskScore >= 80 ? 'risk-critical' : riskScore >= 60 ? 'risk-high' : riskScore >= 40 ? 'risk-warn' : 'risk-info';
 
-  // Reasons (short chips)
-  const reasons = [];
-  if (hwidOver) reasons.push({text: `HWID ${hwid} > ${limit}`, cls: 'red'});
+  // Signal chips (top 3)
+  const signals = [];
+  if (hwidOver) signals.push({text: `HWID ${hwid}>${limit}`, cls: 'red'});
   if (serverResult && serverResult.signals) {
     serverResult.signals.slice(0, 3).forEach(s => {
       const cls = s.category === 'deterministic' ? 'red' : s.category === 'strong' ? 'yellow' : 'gray';
-      const text = (s.reason || s.id || '').length > 30 ? (s.reason || s.id).substring(0, 27) + '…' : (s.reason || s.id);
-      reasons.push({text, cls});
+      const text = (s.reason || s.id || '').length > 25 ? (s.reason || s.id).substring(0, 22) + '…' : (s.reason || s.id);
+      signals.push({text, cls});
     });
   }
 
-  // IPs (max 3)
-  const ipsHtml = ipDetails.slice(0, 3).map(d => {
-    const geo = d.geo ? (d.geo.countryCode || '') : '';
-    return `<span class="susc-ip">${esc(d.ip)}${geo ? ` <em>${esc(geo)}</em>` : ''}</span>`;
-  }).join('');
-  const moreIps = ipDetails.length > 3 ? `<span class="susc-ip susc-more">+${ipDetails.length - 3}</span>` : '';
-
-  const riskCls = riskScore >= 60 ? 'high' : riskScore >= 30 ? 'mid' : 'low';
-
-  return `<div class="susc" onclick="openUserCard('${escAttr(cardKey)}')">
-    <div class="susc-accent"></div>
-    <div class="susc-head">
-      <div class="sc-avatar danger-avatar">${initials}</div>
-      <div class="susc-user">
-        <div class="susc-name">${esc(name)}</div>
-        <span class="susc-badge">${esc(u.status || 'ACTIVE')}</span>
+  return `<tr class="incident-row" onclick="openUserCard('${escAttr(cardKey)}')" style="cursor:pointer">
+    <td class="incident-td-user">
+      <div class="incident-user-cell">
+        <div class="sc-avatar ${riskScore >= 60 ? 'danger-avatar' : riskScore >= 30 ? 'warning-avatar' : ''}" style="width:30px;height:30px;font-size:11px;border-radius:8px">${esc(initials)}</div>
+        <div>
+          <div class="incident-cell-name">${esc(name)}</div>
+          <code class="incident-cell-key">${esc(cardKey.slice(0, 12))}…</code>
+        </div>
       </div>
-    </div>
-    <div class="susc-stats">
-      <span class="${hwidOver ? 'susc-stat-over' : ''}"><b>${hwid}</b>/${limit} HWID</span>
-      <span><b>${ipDetails.length}</b> IP</span>
-      <span class="${riskScore >= 50 ? 'susc-stat-over' : ''}"><b>${riskScore}</b> риск</span>
-    </div>
-    <div class="susc-bar"><div class="susc-bar-fill susc-bar-${riskCls}" style="width:${Math.min(100, riskScore)}%"></div></div>
-    ${reasons.length > 0 ? `<div class="susc-chips">${reasons.map(r => `<span class="susc-chip susc-chip-${r.cls}">${esc(r.text)}</span>`).join('')}</div>` : ''}
-    ${ipDetails.length > 0 ? `<div class="susc-ips">${ipsHtml}${moreIps}</div>` : ''}
-  </div>`;
+    </td>
+    <td class="incident-td-risk">
+      <div class="incident-risk-cell ${riskCls}">
+        <span class="incident-risk-num">${riskScore}</span>
+        <div class="incident-risk-bar"><div class="incident-risk-fill" style="width:${Math.min(100, riskScore)}%"></div></div>
+      </div>
+    </td>
+    <td><span class="${hwidOver ? 'incident-reason-chip' : ''}" style="${hwidOver ? 'background:rgba(239,68,68,0.12);color:var(--red)' : ''}">${hwid}/${limit}</span></td>
+    <td>${ipDetails.length}</td>
+    <td class="incident-td-reason">
+      <div class="incident-reason-chips">${signals.map(r => `<span class="incident-reason-chip susc-chip-${r.cls}">${esc(r.text)}</span>`).join('')}</div>
+    </td>
+    <td class="incident-td-actions">
+      <button class="btn-sm" onclick="event.stopPropagation();openUserCard('${escAttr(cardKey)}')">${IC._s('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>', 14)}</button>
+    </td>
+  </tr>`;
 }
+
+// Keep suspectCardHtml as alias for dashboard mini-grid
+function suspectCardHtml(u) { return suspectRowHtml(u); }
 
 // ─── Incident Center ───────────────────────────────────────────────
 const INCIDENT_STATUS_LABELS = {
