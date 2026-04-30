@@ -144,7 +144,7 @@ function createDetector(options = {}) {
     if (behaviorSignal) signals.push(behaviorSignal);
 
     // ═══ STRONG: Simultaneous Distinct Networks (#7) ═══
-    const simNetSignal = detectSimultaneousNetworks(u, state, keys);
+    const simNetSignal = detectSimultaneousNetworks(u, state, keys, hwidLimit);
     if (simNetSignal) signals.push(simNetSignal);
 
     // ═══ STRONG: Extracted VLESS Key Suspected (#8) ═══
@@ -390,8 +390,9 @@ function createDetector(options = {}) {
 
   // ─── #7 Simultaneous Distinct Networks ──────────────────────
   // Measures IP overlap across different ASNs/countries over time.
-  // Not just "3 IPs", but "3 distinct ASNs active simultaneously across snapshots".
-  function detectSimultaneousNetworks(u, state, keys) {
+  // Only flags when concurrent ASN count EXCEEDS the user's HWID limit.
+  // If user paid for 5 devices, 3 ASNs is normal.
+  function detectSimultaneousNetworks(u, state, keys, hwidLimit) {
     const history = state.ipHistory || [];
     if (history.length < 3) return null;
 
@@ -399,6 +400,7 @@ function createDetector(options = {}) {
     let overlapCount = 0;
     let maxConcurrentAsns = 0;
     let maxConcurrentCountries = 0;
+    let maxConcurrentIps = 0;
     let overlapDetail = '';
 
     // Check recent snapshots (last 12 = ~1 hour at 5-min intervals)
@@ -407,11 +409,12 @@ function createDetector(options = {}) {
     for (const snap of recentHistory) {
       const asns = new Set();
       const countries = new Set();
+      let ipCount = 0;
       for (const key of keys) {
         const ips = snap.ips && snap.ips[key];
         if (!Array.isArray(ips)) continue;
         for (const ip of ips) {
-          // Look up geo from current activeIps
+          ipCount++;
           const activeEntries = (state.activeIps || {})[key] || [];
           const entry = activeEntries.find(e => e && e.ip === ip);
           if (entry && entry.geo) {
@@ -420,38 +423,40 @@ function createDetector(options = {}) {
           }
         }
       }
-      if (asns.size >= 2) {
+      // Only count as overlap if ASN count EXCEEDS the user's device limit
+      if (asns.size > hwidLimit) {
         overlapCount++;
         if (asns.size > maxConcurrentAsns) {
           maxConcurrentAsns = asns.size;
           maxConcurrentCountries = countries.size;
-          overlapDetail = `${asns.size} ASN, ${countries.size} стран`;
+          maxConcurrentIps = ipCount;
+          overlapDetail = `${asns.size} ASN, ${countries.size} стран (лимит ${hwidLimit})`;
         }
       }
     }
 
     // Persistent overlap across multiple snapshots = strong evidence
-    if (overlapCount >= 3 && maxConcurrentAsns >= 3) {
+    if (overlapCount >= 3 && maxConcurrentAsns > hwidLimit) {
       return {
         id: 'simultaneous_distinct_networks', category: 'strong', active: true,
         points: 25,
         reason: `${overlapCount} снимков с ${overlapDetail} одновременно (${overlapCount * 5} мин пересечения)`,
       };
     }
-    if (overlapCount >= 2 && maxConcurrentAsns >= 2 && maxConcurrentCountries >= 2) {
+    if (overlapCount >= 2 && maxConcurrentCountries >= 2 && maxConcurrentAsns > hwidLimit) {
       return {
         id: 'simultaneous_distinct_networks', category: 'strong', active: true,
         points: 20,
-        reason: `${overlapCount} снимков с разными сетями из ${maxConcurrentCountries} стран`,
+        reason: `${overlapCount} снимков с ${maxConcurrentAsns} ASN из ${maxConcurrentCountries} стран (лимит ${hwidLimit})`,
       };
     }
     return null;
   }
 
   // ─── #8 Extracted VLESS Key Detection ───────────────────────
-  // HWID is normal, but UUID simultaneously used from multiple distinct ASNs.
-  // This catches key sharing where the key was extracted from the subscription
-  // and used directly in a VLESS client without HWID reporting.
+  // HWID is normal, but UUID simultaneously used from more distinct ASNs
+  // than the user's device limit allows. This catches key extraction.
+  // If user paid for 5 devices, 3 ASNs is fine — only flag when > limit.
   function detectExtractedKey(u, state, keys, hwidLimit, hwidCount) {
     // Only fire if HWID is NOT over limit (otherwise hwid_over_limit handles it)
     if (hwidCount > hwidLimit) return null;
@@ -473,9 +478,9 @@ function createDetector(options = {}) {
       }
     }
 
-    // Need at least 3 distinct ASNs AND 2 countries to be suspicious
-    // (2 ASNs in same country is normal: WiFi + mobile)
-    if (asns.size >= 3 && countries.size >= 2 && totalIps >= 3) {
+    // Only suspicious if concurrent ASNs EXCEED the device limit
+    // AND there are multiple countries (rules out WiFi+mobile+work in same city)
+    if (asns.size > hwidLimit && countries.size >= 2 && totalIps > hwidLimit) {
       // Check ipHistory for persistence (not just a momentary blip)
       const history = state.ipHistory || [];
       let multiAsnSnapshots = 0;
@@ -490,21 +495,21 @@ function createDetector(options = {}) {
             if (entry && entry.geo && entry.geo.asn) snapAsns.add(String(entry.geo.asn));
           }
         }
-        if (snapAsns.size >= 3) multiAsnSnapshots++;
+        if (snapAsns.size > hwidLimit) multiAsnSnapshots++;
       }
 
       if (multiAsnSnapshots >= 2) {
         return {
           id: 'extracted_key_suspected', category: 'strong', active: true,
           points: 25,
-          reason: `HWID ${hwidCount}/${hwidLimit} (норма), но ${asns.size} ASN из ${countries.size} стран одновременно — вероятно ключ вытащен из подписки`,
+          reason: `HWID ${hwidCount}/${hwidLimit} (норма), но ${asns.size} ASN из ${countries.size} стран > лимит ${hwidLimit} — вероятно ключ извлечён`,
         };
       }
 
       return {
         id: 'extracted_key_suspected', category: 'strong', active: true,
         points: 15,
-        reason: `HWID в норме, но ${asns.size} ASN и ${countries.size} стран одновременно`,
+        reason: `HWID в норме, но ${asns.size} ASN и ${countries.size} стран > лимит ${hwidLimit}`,
       };
     }
 
