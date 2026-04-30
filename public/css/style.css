@@ -436,6 +436,7 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 .ip-pill-stable { background: rgba(16,185,129,0.1); color: var(--green); border: 1px solid rgba(16,185,129,0.2); }
 .ip-pill-new { background: rgba(99,102,241,0.1); color: var(--accent); border: 1px solid rgba(99,102,241,0.2); }
 .ip-row-more { justify-content: center; color: var(--text3); font-size: 12px; padding: 8px; }
+.ip-node-badge { font-size: 9px; font-weight: 700; font-family: 'JetBrains Mono', monospace; padding: 2px 6px; border-radius: 4px; background: rgba(20,184,166,0.1); color: #2dd4bf; border: 1px solid rgba(20,184,166,0.2); white-space: nowrap; letter-spacing: 0.02em; cursor: help; }
 .conn-type { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
 .conn-type-cell { background: rgba(168,85,247,0.1); border-color: rgba(168,85,247,0.25); color: #c084fc; }
 .conn-type-cable { background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.2); color: #93c5fd; }

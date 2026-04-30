@@ -2253,9 +2253,11 @@ function userCardHtml(u) {
     const connBadge = connType
       ? `<span class="conn-type conn-type-${connType.toLowerCase().includes('cell') ? 'cell' : connType.toLowerCase().includes('cable') || connType.toLowerCase().includes('dsl') ? 'cable' : connType.toLowerCase().includes('corp') ? 'corp' : 'other'}">${esc(connType)}</span>`
       : '';
+    const nodeLabel = d.nodeUuid ? d.nodeUuid.slice(0, 8) : '';
     return `<div class="ip-row">
       <code class="ip-row-addr">${esc(d.ip)}</code>
       ${ls ? `<span class="lastseen lastseen-${ls.level}">${ls.text}</span>` : ''}
+      ${nodeLabel ? `<span class="ip-node-badge" title="Node: ${escAttr(d.nodeUuid)}">${esc(nodeLabel)}</span>` : ''}
       ${connBadge}
       ${country ? `<span class="ip-row-geo">${esc(country)}${city ? ' ' + esc(city) : ''}</span>` : ''}
       ${asn ? `<span class="ip-row-asn">${esc(asn)}${org ? ' · ' + esc(org) : ''}</span>` : ''}
@@ -3577,6 +3579,7 @@ function getIpDetails(u) {
         ip:       typeof o === 'string' ? o : o.ip,
         lastSeen: typeof o === 'string' ? null : o.lastSeen,
         geo:      typeof o === 'string' ? null : o.geo || null,
+        nodeUuid: typeof o === 'string' ? null : o.nodeUuid || null,
         stable:   hasHistory ? stableSet.has(typeof o === 'string' ? o : o.ip) : false,
         fresh:    isFreshLastSeen(typeof o === 'string' ? null : o.lastSeen)
       }));
