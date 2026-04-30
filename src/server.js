@@ -235,6 +235,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === '/api/hwid-devices') {
+      await handleHwidDevices(req, res, parsedUrl);
+      return;
+    }
+
+    if (pathname === '/api/user-bandwidth') {
+      await handleUserBandwidth(req, res, parsedUrl);
+      return;
+    }
+
+    if (pathname === '/api/fetch-user-ips') {
+      await handleFetchUserIps(req, res, parsedUrl);
+      return;
+    }
+
     await serveStatic(req, res, pathname);
   } catch (e) {
     console.error('[server] unexpected error:', e);
@@ -573,6 +588,108 @@ async function handleSubHistory(req, res) {
     sendJson(res, 500, { error: 'Failed to load subscription history' });
   }
 }
+
+// ─── Remnawave API Proxy Helper ─────────────────────────────────
+function remnawaveApi(method, apiPath, body = null, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const base = new URL(REMNAWAVE_BASE_URL);
+    const opts = {
+      hostname: base.hostname,
+      port: base.port || (base.protocol === 'https:' ? 443 : 80),
+      path: apiPath,
+      method,
+      headers: {
+        'Authorization': `Bearer ${REMNAWAVE_API_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      rejectAuthorized: false,
+    };
+    const proto = base.protocol === 'https:' ? https : require('http');
+    const timer = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, timeoutMs);
+    const req = proto.request(opts, (resp) => {
+      const chunks = [];
+      resp.on('data', (c) => chunks.push(c));
+      resp.on('end', () => {
+        clearTimeout(timer);
+        try {
+          const text = Buffer.concat(chunks).toString();
+          resolve({ statusCode: resp.statusCode, json: JSON.parse(text) });
+        } catch (e) { reject(new Error('Invalid JSON from Remnawave')); }
+      });
+    });
+    req.on('error', (e) => { clearTimeout(timer); reject(e); });
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+// ─── HWID Devices ───────────────────────────────────────────────
+async function handleHwidDevices(req, res, parsedUrl) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  const uuid = parsedUrl.searchParams.get('uuid') || '';
+  if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
+  try {
+    const resp = await remnawaveApi('GET', `/api/hwid/devices/${uuid}`);
+    sendJson(res, 200, resp.json?.response || {});
+  } catch (e) {
+    console.error('[hwid-devices] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── User Bandwidth ─────────────────────────────────────────────
+async function handleUserBandwidth(req, res, parsedUrl) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  const uuid = parsedUrl.searchParams.get('uuid') || '';
+  if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
+  const days = Math.min(30, Math.max(1, parseInt(parsedUrl.searchParams.get('days') || '7', 10)));
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  const startStr = start.toISOString().split('T')[0];
+  const endStr = end.toISOString().split('T')[0];
+  try {
+    const resp = await remnawaveApi('GET', `/api/bandwidth-stats/users/${uuid}?start=${startStr}&end=${endStr}`);
+    sendJson(res, 200, resp.json?.response || {});
+  } catch (e) {
+    console.error('[user-bandwidth] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── Fetch User IPs (IP Control) ───────────────────────────────
+async function handleFetchUserIps(req, res, parsedUrl) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  const uuid = parsedUrl.searchParams.get('uuid') || '';
+  if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
+  try {
+    // Step 1: Submit job
+    const jobResp = await remnawaveApi('POST', `/api/ip-control/fetch-ips/${uuid}`, {});
+    const jobId = jobResp.json?.response?.jobId;
+    if (!jobId) { sendJson(res, 500, { error: 'No jobId returned' }); return; }
+
+    // Step 2: Poll for result (max 15s)
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 500));
+      const result = await remnawaveApi('GET', `/api/ip-control/fetch-ips/result/${jobId}`);
+      const data = result.json?.response;
+      if (data?.isCompleted) {
+        if (data.isFailed) { sendJson(res, 500, { error: 'Job failed' }); return; }
+        sendJson(res, 200, data.result || {});
+        return;
+      }
+    }
+    sendJson(res, 504, { error: 'IP fetch timeout' });
+  } catch (e) {
+    console.error('[fetch-user-ips] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
 
 async function handleNotifyUser(req, res) {
   if (!requireAuth(req, res)) return;

@@ -1272,3 +1272,88 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
   .sub-rec-header, .sub-rec-row { grid-template-columns: 80px 70px 1fr; }
   .sub-rec-ua { display: none; }
 }
+
+/* ── HWID Device Cards ── */
+.hwid-dev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.hwid-dev-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 4px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.hwid-dev-card:hover { border-color: var(--accent); box-shadow: 0 2px 12px rgba(99,102,241,0.08); }
+.hwid-dev-head { display: flex; align-items: center; gap: 6px; }
+.hwid-dev-icon { font-size: 18px; }
+.hwid-dev-platform { font-weight: 600; font-size: 13px; color: var(--text1); }
+.hwid-dev-time { margin-left: auto; font-size: 10px; color: var(--text3); }
+.hwid-dev-model { font-size: 13px; color: var(--text1); font-weight: 500; }
+.hwid-dev-os { font-size: 11px; color: var(--text3); }
+.hwid-dev-id { font-size: 10px; color: var(--accent); background: rgba(99,102,241,0.06); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
+.hwid-dev-ua { font-size: 10px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hwid-dev-created { font-size: 10px; color: var(--text3); }
+
+/* ── Bandwidth Chart ── */
+.bw-chart { display: flex; flex-direction: column; gap: 10px; }
+.bw-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.bw-legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text2); }
+.bw-legend-item small { color: var(--text3); font-size: 10px; }
+.bw-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.bw-bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 0 2px; }
+.bw-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; position: relative; min-width: 0; }
+.bw-bar-stack {
+  width: 100%; max-width: 32px; border-radius: 4px 4px 0 0; display: flex; flex-direction: column-reverse;
+  overflow: hidden; margin-top: auto; transition: height 0.5s ease;
+}
+.bw-bar-seg { min-height: 1px; width: 100%; opacity: 0.85; transition: opacity 0.2s; }
+.bw-bar-seg:hover { opacity: 1; }
+.bw-bar-label { font-size: 9px; color: var(--text3); margin-top: 4px; white-space: nowrap; }
+.bw-bar-val { font-size: 9px; color: var(--text2); font-weight: 500; }
+
+/* ── Mini Select / Button ── */
+.mini-select {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text2); font-size: 11px; padding: 3px 6px; cursor: pointer;
+  outline: none; transition: border-color 0.2s;
+}
+.mini-select:focus { border-color: var(--accent); }
+.btn-mini {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: rgba(99,102,241,0.1); color: var(--accent); border: 1px solid rgba(99,102,241,0.2);
+  border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s;
+}
+.btn-mini:hover { background: rgba(99,102,241,0.18); border-color: var(--accent); }
+.btn-mini:disabled { opacity: 0.5; cursor: wait; }
+.btn-accent { color: var(--accent); }
+
+/* ── Live IP Results ── */
+.live-ip-summary {
+  padding: 10px 14px; background: rgba(99,102,241,0.05); border-radius: 8px;
+  font-size: 13px; color: var(--text1); margin-bottom: 10px;
+}
+.live-ip-nodes { display: flex; flex-direction: column; gap: 8px; }
+.live-ip-node { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.live-ip-node-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border); background: rgba(99,102,241,0.03);
+}
+.live-ip-node-flag { font-size: 14px; }
+.live-ip-node-name { font-size: 12px; font-weight: 600; color: var(--text1); flex: 1; }
+.live-ip-list { display: flex; flex-direction: column; }
+.live-ip-entry {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 12px; font-size: 12px; border-top: 1px solid var(--border);
+}
+.live-ip-entry:first-child { border-top: none; }
+.live-ip-entry code { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.live-ip-seen { font-size: 10px; color: var(--text3); }
+
+/* ── Spinner Small (inline) ── */
+.spinner-small {
+  width: 12px; height: 12px; border: 2px solid transparent; border-top-color: currentColor;
+  border-radius: 50%; animation: spin 0.6s linear infinite; display: inline-block;
+}
+
+@media (max-width: 600px) {
+  .hwid-dev-grid { grid-template-columns: 1fr; }
+  .bw-bars { height: 90px; }
+}

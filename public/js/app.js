@@ -1771,6 +1771,9 @@ function switchUcTab(tabName) {
   if (tabName === 'subscriptions') {
     loadSubHistoryTab();
   }
+  if (tabName === 'devices') {
+    loadHwidDevicesTab();
+  }
 }
 
 let _currentCardUserKey = '';
@@ -1790,6 +1793,7 @@ function openUserCard(key) {
   // Auto-load all tab data
   loadUserHistory(key);
   loadNotificationHistory(key);
+  loadUserBandwidth();
 }
 
 async function loadSubHistoryTab() {
@@ -1883,6 +1887,189 @@ function closeUserModal(event) {
   if (event && event.target && event.currentTarget && event.target !== event.currentTarget) return;
   document.getElementById('user-modal')?.classList.add('hidden');
 }
+
+// ─── HWID Devices Tab (from panel API) ──────────────────────────
+async function loadHwidDevicesTab() {
+  const container = document.getElementById('hwid-devices-container');
+  const countEl = document.getElementById('hwid-device-count');
+  if (!container || !_currentCardUserKey) return;
+  if (container.dataset.loaded === 'true') return;
+  container.dataset.loaded = 'true';
+  const user = findUserByAnyKey(_currentCardUserKey);
+  const uuid = user && (user.uuid || user.userUuid || user.id);
+  if (!uuid) return;
+  try {
+    const resp = await fetch('/api/hwid-devices?uuid=' + encodeURIComponent(uuid));
+    const data = await resp.json();
+    const devices = data.devices || [];
+    if (countEl) countEl.textContent = devices.length || data.total || '0';
+    if (devices.length === 0) {
+      container.innerHTML = '<div class="empty-state sm"><p>Нет зарегистрированных устройств</p></div>';
+      return;
+    }
+    const platformIcon = (p) => {
+      const pl = (p || '').toLowerCase();
+      if (pl === 'ios') return '🍎';
+      if (pl === 'android') return '🤖';
+      if (pl === 'windows') return '🖥️';
+      if (pl === 'macos') return '💻';
+      return '📱';
+    };
+    let html = '<div class="hwid-dev-grid">';
+    for (const d of devices) {
+      const model = d.deviceModel || d.model || '—';
+      const os = d.osVersion ? `${d.platform || ''} ${d.osVersion}` : (d.platform || '—');
+      const updated = d.updatedAt ? new Date(d.updatedAt) : null;
+      const created = d.createdAt ? new Date(d.createdAt) : null;
+      const timeAgo = updated ? fmtTimeAgo(updated) : '—';
+      html += `<div class="hwid-dev-card">
+        <div class="hwid-dev-head">
+          <span class="hwid-dev-icon">${platformIcon(d.platform)}</span>
+          <span class="hwid-dev-platform">${esc(d.platform || '?')}</span>
+          <span class="hwid-dev-time" title="${updated ? updated.toLocaleString('ru-RU') : ''}">${timeAgo}</span>
+        </div>
+        <div class="hwid-dev-model">${esc(model)}</div>
+        <div class="hwid-dev-os">${esc(os)}</div>
+        <code class="hwid-dev-id" title="${esc(d.hwid || '')}">${esc((d.hwid || '').substring(0, 20))}</code>
+        ${d.userAgent ? `<div class="hwid-dev-ua" title="${escAttr(d.userAgent)}">${esc(d.userAgent.substring(0, 40))}</div>` : ''}
+        ${created ? `<div class="hwid-dev-created">Создан: ${created.toLocaleDateString('ru-RU')}</div>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = '<div class="empty-state sm"><p>Ошибка загрузки: ' + esc(e.message) + '</p></div>';
+  }
+}
+
+function fmtTimeAgo(date) {
+  const sec = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (sec < 60) return 'только что';
+  if (sec < 3600) return Math.floor(sec / 60) + ' мин назад';
+  if (sec < 86400) return Math.floor(sec / 3600) + ' ч назад';
+  return Math.floor(sec / 86400) + ' дн назад';
+}
+
+// ─── Bandwidth Chart ────────────────────────────────────────────
+async function loadUserBandwidth() {
+  const el = document.getElementById('bandwidth-chart');
+  if (!el || !_currentCardUserKey) return;
+  const user = findUserByAnyKey(_currentCardUserKey);
+  const uuid = user && (user.uuid || user.userUuid || user.id);
+  if (!uuid) { el.innerHTML = '<div class="empty-state sm"><p>UUID не найден</p></div>'; return; }
+  const daysEl = document.getElementById('bandwidth-days');
+  const days = daysEl ? daysEl.value : '7';
+  try {
+    const resp = await fetch(`/api/user-bandwidth?uuid=${encodeURIComponent(uuid)}&days=${days}`);
+    const data = await resp.json();
+    if (data.error) { el.innerHTML = `<div class="empty-state sm"><p>${esc(data.error)}</p></div>`; return; }
+    const categories = data.categories || [];
+    const series = data.series || [];
+    if (categories.length === 0 || series.length === 0) {
+      el.innerHTML = '<div class="empty-state sm"><p>Нет данных за период</p></div>';
+      return;
+    }
+    // Find max per-day total for scaling
+    const dayTotals = categories.map((_, i) => series.reduce((s, sr) => s + (sr.data[i] || 0), 0));
+    const maxDay = Math.max(...dayTotals, 1);
+    // Sort series by total descending, take top 8
+    const sorted = series.sort((a, b) => (b.total || 0) - (a.total || 0));
+    const topSeries = sorted.slice(0, 8);
+    const otherSeries = sorted.slice(8);
+    // Build chart
+    let html = '<div class="bw-chart">';
+    // Legend
+    html += '<div class="bw-legend">';
+    for (const s of topSeries) {
+      html += `<span class="bw-legend-item"><span class="bw-legend-dot" style="background:${s.color || '#888'}"></span>${esc(s.name || '?')} <small>${esc(fmtBytes(s.total || 0))}</small></span>`;
+    }
+    if (otherSeries.length > 0) {
+      const otherTotal = otherSeries.reduce((s, sr) => s + (sr.total || 0), 0);
+      html += `<span class="bw-legend-item"><span class="bw-legend-dot" style="background:#666"></span>Другие (${otherSeries.length}) <small>${esc(fmtBytes(otherTotal))}</small></span>`;
+    }
+    html += '</div>';
+    // Bars
+    html += '<div class="bw-bars">';
+    for (let i = 0; i < categories.length; i++) {
+      const dayTotal = dayTotals[i];
+      const pct = dayTotal / maxDay * 100;
+      const dateStr = categories[i].replace(/^\d{4}-/, '').replace('-', '/');
+      html += `<div class="bw-bar-col" title="${esc(fmtBytes(dayTotal))}">`;
+      html += `<div class="bw-bar-stack" style="height:${Math.max(2, pct)}%">`;
+      for (const s of topSeries) {
+        const val = s.data[i] || 0;
+        if (val <= 0) continue;
+        const segPct = val / dayTotal * 100;
+        html += `<div class="bw-bar-seg" style="height:${segPct}%;background:${s.color || '#888'}" title="${esc(s.name)}: ${esc(fmtBytes(val))}"></div>`;
+      }
+      if (otherSeries.length > 0) {
+        const otherVal = otherSeries.reduce((s, sr) => s + (sr.data[i] || 0), 0);
+        if (otherVal > 0) {
+          html += `<div class="bw-bar-seg" style="height:${otherVal / dayTotal * 100}%;background:#666" title="Другие: ${esc(fmtBytes(otherVal))}"></div>`;
+        }
+      }
+      html += '</div>';
+      html += `<div class="bw-bar-label">${dateStr}</div>`;
+      html += `<div class="bw-bar-val">${esc(fmtBytes(dayTotal))}</div>`;
+      html += '</div>';
+    }
+    html += '</div></div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div class="empty-state sm"><p>Ошибка: ' + esc(e.message) + '</p></div>';
+  }
+}
+
+// ─── Live IP Fetch (IP Control) ─────────────────────────────────
+async function fetchUserLiveIps(uuid) {
+  const btn = document.getElementById('live-ip-btn');
+  const container = document.getElementById('live-ip-results');
+  if (!container || !uuid) return;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<div class="spinner-small"></div> Запрос…'; }
+  container.innerHTML = '<div class="loading-state" style="padding:12px"><div class="spinner-large"></div><p>Запрос IP с нод… (до 15 сек)</p></div>';
+  try {
+    const resp = await fetch('/api/fetch-user-ips?uuid=' + encodeURIComponent(uuid));
+    const data = await resp.json();
+    if (data.error) { container.innerHTML = `<div class="empty-state sm"><p>⚠️ ${esc(data.error)}</p></div>`; return; }
+    const nodes = data.nodes || [];
+    if (nodes.length === 0) {
+      container.innerHTML = '<div class="empty-state sm"><p>Пользователь не подключен ни к одной ноде</p></div>';
+      return;
+    }
+    // Count unique IPs
+    const allIps = new Set();
+    nodes.forEach(n => (n.ips || []).forEach(ip => allIps.add(ip.ip)));
+    let html = `<div class="live-ip-summary">🌐 <b>${allIps.size}</b> уникальных IP на <b>${nodes.length}</b> нодах</div>`;
+    html += '<div class="live-ip-nodes">';
+    for (const node of nodes) {
+      const ips = node.ips || [];
+      if (ips.length === 0) continue;
+      html += `<div class="live-ip-node">
+        <div class="live-ip-node-head">
+          <span class="live-ip-node-flag">${node.countryCode || '🌍'}</span>
+          <span class="live-ip-node-name">${esc(node.nodeName || node.nodeUuid?.substring(0, 8) || '?')}</span>
+          <span class="uc-badge">${ips.length}</span>
+        </div>
+        <div class="live-ip-list">
+          ${ips.map(ip => `<div class="live-ip-entry">
+            <code>${esc(ip.ip)}</code>
+            <span class="live-ip-seen">${ip.lastSeen ? fmtTimeAgo(new Date(ip.lastSeen)) : ''}</span>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<div class="empty-state sm"><p>Ошибка: ${esc(e.message)}</p></div>`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = IC._s('<path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', 14) + ' Получить IP';
+    }
+  }
+}
+
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeUserModal();
@@ -2500,6 +2687,20 @@ function userCardHtml(u) {
               </div>
             </div>
 
+            <div class="uc-section" style="margin:0;border:none;border-radius:0">
+              <div class="uc-section-head"><span>Трафик по нодам</span>
+                <select id="bandwidth-days" class="mini-select" onchange="loadUserBandwidth()">
+                  <option value="3">3 дня</option>
+                  <option value="7" selected>7 дней</option>
+                  <option value="14">14 дней</option>
+                  <option value="30">30 дней</option>
+                </select>
+              </div>
+              <div id="bandwidth-chart" style="min-height:80px">
+                <div class="loading-state" style="padding:12px"><div class="spinner-large"></div></div>
+              </div>
+            </div>
+
             ${rawFields.length > 0 ? `<div>${userRawFieldsSection(rawFields)}</div>` : ''}
           </div>
         </div>
@@ -2529,15 +2730,27 @@ function userCardHtml(u) {
         <!-- TAB: Устройства -->
         <div class="uc-tab-panel" data-uctab-panel="devices">
           <div style="padding:18px;display:flex;flex-direction:column;gap:14px">
-            ${freshIps.length > 0 ? `<div class="uc-section" style="margin:0">
-              <div class="uc-section-head"><span>IP-адреса</span><span class="uc-badge">${freshIps.length}</span></div>
-              <div class="ip-rows">${ipRowsHtml}${moreIps}</div>
-            </div>` : ''}
+            <!-- Live IP Button -->
+            <div class="uc-section" style="margin:0">
+              <div class="uc-section-head">
+                <span>IP-адреса (xray)</span>
+                <button class="btn-mini btn-accent" onclick="fetchUserLiveIps('${escAttr(uuid)}')" id="live-ip-btn">
+                  ${IC._s('<path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', 14)}
+                  Получить IP
+                </button>
+              </div>
+              <div id="live-ip-results">
+                ${freshIps.length > 0 ? `<div class="ip-rows">${ipRowsHtml}${moreIps}</div>` : '<div class="empty-state sm"><p>Нажмите кнопку для получения реальных IP</p></div>'}
+              </div>
+            </div>
 
-            ${devices.length > 0 ? `<div class="uc-section" style="margin:0">
-              <div class="uc-section-head"><span>Устройства</span><span class="uc-badge">${devices.length}</span></div>
-              <div class="dev-rows">${devices.map(deviceDetailHtml).join('')}</div>
-            </div>` : '<div class="empty-state sm"><p>Нет данных устройств</p></div>'}
+            <!-- HWID Devices from API -->
+            <div class="uc-section" style="margin:0">
+              <div class="uc-section-head"><span>Устройства (HWID)</span><span class="uc-badge" id="hwid-device-count">${hwidCount}</span></div>
+              <div id="hwid-devices-container">
+                ${devices.length > 0 ? `<div class="dev-rows">${devices.map(deviceDetailHtml).join('')}</div>` : '<div class="loading-state" style="padding:16px"><div class="spinner-large"></div><p>Загрузка устройств…</p></div>'}
+              </div>
+            </div>
           </div>
         </div>
 
