@@ -1291,6 +1291,21 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 .hwid-dev-ua { font-size: 10px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hwid-dev-created { font-size: 10px; color: var(--text3); }
 
+/* HWID Delete button */
+.hwid-del-btn {
+  background: none; border: none; color: var(--text3); cursor: pointer; padding: 2px;
+  border-radius: 4px; opacity: 0; transition: all 0.2s; margin-left: auto;
+}
+.hwid-dev-card:hover .hwid-del-btn { opacity: 1; }
+.hwid-del-btn:hover { color: var(--red); background: rgba(239,68,68,0.1); }
+.btn-danger-mini {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: rgba(239,68,68,0.08); color: var(--red); border: 1px solid rgba(239,68,68,0.2);
+  border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s;
+}
+.btn-danger-mini:hover { background: rgba(239,68,68,0.16); border-color: var(--red); }
+
 /* ── Bandwidth Chart ── */
 .bw-chart { display: flex; flex-direction: column; gap: 10px; }
 .bw-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; }

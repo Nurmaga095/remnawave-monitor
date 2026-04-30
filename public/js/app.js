@@ -1915,17 +1915,26 @@ async function loadHwidDevicesTab() {
       if (pl === 'macos') return '💻';
       return '📱';
     };
-    let html = '<div class="hwid-dev-grid">';
+    let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+      <button class="btn-mini btn-danger-mini" onclick="deleteAllHwidDevices('${escAttr(uuid)}')">
+        ${IC._s('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 12)}
+        Удалить все
+      </button>
+    </div>`;
+    html += '<div class="hwid-dev-grid">';
     for (const d of devices) {
       const model = d.deviceModel || d.model || '—';
       const os = d.osVersion ? `${d.platform || ''} ${d.osVersion}` : (d.platform || '—');
       const updated = d.updatedAt ? new Date(d.updatedAt) : null;
       const created = d.createdAt ? new Date(d.createdAt) : null;
       const timeAgo = updated ? fmtTimeAgo(updated) : '—';
-      html += `<div class="hwid-dev-card">
+      html += `<div class="hwid-dev-card" id="hwid-card-${escAttr(d.hwid || '')}">
         <div class="hwid-dev-head">
           <span class="hwid-dev-icon">${platformIcon(d.platform)}</span>
           <span class="hwid-dev-platform">${esc(d.platform || '?')}</span>
+          <button class="hwid-del-btn" onclick="deleteHwidDevice('${escAttr(uuid)}','${escAttr(d.hwid || '')}','${escAttr(model)}')" title="Удалить устройство">
+            ${IC._s('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 12)}
+          </button>
           <span class="hwid-dev-time" title="${updated ? updated.toLocaleString('ru-RU') : ''}">${timeAgo}</span>
         </div>
         <div class="hwid-dev-model">${esc(model)}</div>
@@ -1941,6 +1950,64 @@ async function loadHwidDevicesTab() {
     container.innerHTML = '<div class="empty-state sm"><p>Ошибка загрузки: ' + esc(e.message) + '</p></div>';
   }
 }
+
+function deleteHwidDevice(userUuid, hwid, modelName) {
+  showConfirmDialog({
+    title: 'Удалить устройство?',
+    message: `${modelName} (${hwid.substring(0, 12)}…)`,
+    detail: 'Устройство будет отвязано от этого пользователя. При следующем подключении оно зарегистрируется заново.',
+    confirmText: 'Удалить',
+    confirmClass: 'danger',
+    icon: IC._s('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 22),
+    onConfirm: async () => {
+      try {
+        const resp = await fetch('/api/hwid-device-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userUuid, hwid }),
+        });
+        const data = await resp.json();
+        if (data.error) { toast('Ошибка: ' + data.error, 'error'); return; }
+        toast('Устройство удалено', 'success');
+        // Remove card with animation
+        const card = document.getElementById('hwid-card-' + hwid);
+        if (card) { card.style.transition = 'opacity 0.3s, transform 0.3s'; card.style.opacity = '0'; card.style.transform = 'scale(0.9)'; setTimeout(() => card.remove(), 300); }
+        // Update counter
+        const countEl = document.getElementById('hwid-device-count');
+        if (countEl) countEl.textContent = Math.max(0, parseInt(countEl.textContent || '0') - 1);
+      } catch (e) { toast('Ошибка: ' + e.message, 'error'); }
+    },
+  });
+}
+
+function deleteAllHwidDevices(userUuid) {
+  showConfirmDialog({
+    title: 'Удалить ВСЕ устройства?',
+    message: 'Все HWID устройства будут отвязаны от этого пользователя.',
+    warning: 'Это действие нельзя отменить!',
+    confirmText: 'Удалить все',
+    confirmClass: 'danger',
+    icon: IC._s('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>', 22),
+    onConfirm: async () => {
+      try {
+        const resp = await fetch('/api/hwid-device-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userUuid, deleteAll: true }),
+        });
+        const data = await resp.json();
+        if (data.error) { toast('Ошибка: ' + data.error, 'error'); return; }
+        toast('Все устройства удалены', 'success');
+        // Reload devices tab
+        const container = document.getElementById('hwid-devices-container');
+        if (container) { container.dataset.loaded = ''; loadHwidDevicesTab(); }
+        const countEl = document.getElementById('hwid-device-count');
+        if (countEl) countEl.textContent = '0';
+      } catch (e) { toast('Ошибка: ' + e.message, 'error'); }
+    },
+  });
+}
+
 
 function fmtTimeAgo(date) {
   const sec = Math.floor((Date.now() - date.getTime()) / 1000);

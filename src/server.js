@@ -250,6 +250,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === '/api/hwid-device-delete') {
+      await handleHwidDeviceDelete(req, res);
+      return;
+    }
+
     await serveStatic(req, res, pathname);
   } catch (e) {
     console.error('[server] unexpected error:', e);
@@ -635,6 +640,33 @@ async function handleHwidDevices(req, res, parsedUrl) {
     sendJson(res, 200, resp.json?.response || {});
   } catch (e) {
     console.error('[hwid-devices] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── Delete HWID Device(s) ──────────────────────────────────────
+async function handleHwidDeviceDelete(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  let body;
+  try { body = JSON.parse(await readBody(req)); } catch { sendJson(res, 400, { error: 'Invalid JSON' }); return; }
+  const userUuid = String(body.userUuid || '');
+  if (!userUuid) { sendJson(res, 400, { error: 'userUuid is required' }); return; }
+  try {
+    if (body.deleteAll) {
+      // Delete all devices for user
+      const resp = await remnawaveApi('POST', '/api/hwid/devices/delete-all', { userUuid });
+      console.log(`[hwid] deleted ALL devices for ${userUuid}`);
+      sendJson(res, 200, { ok: true, deleted: 'all' });
+    } else {
+      const hwid = String(body.hwid || '');
+      if (!hwid) { sendJson(res, 400, { error: 'hwid is required' }); return; }
+      const resp = await remnawaveApi('POST', '/api/hwid/devices/delete', { userUuid, hwid });
+      console.log(`[hwid] deleted device ${hwid} for ${userUuid}`);
+      sendJson(res, 200, { ok: true, deleted: hwid });
+    }
+  } catch (e) {
+    console.error('[hwid-delete] error:', e.message);
     sendJson(res, 500, { error: e.message });
   }
 }
