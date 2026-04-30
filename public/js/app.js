@@ -1768,7 +1768,12 @@ function toggleExpand(id) {
 function switchUcTab(tabName) {
   document.querySelectorAll('.uc-tab').forEach(t => t.classList.toggle('active', t.dataset.uctab === tabName));
   document.querySelectorAll('.uc-tab-panel').forEach(p => p.classList.toggle('active', p.dataset.uctabPanel === tabName));
+  if (tabName === 'subscriptions') {
+    loadSubHistoryTab();
+  }
 }
+
+let _currentCardUserKey = '';
 
 function openUserCard(key) {
   const user = findUserByAnyKey(key);
@@ -1776,14 +1781,102 @@ function openUserCard(key) {
   const content = document.getElementById('user-modal-content');
   if (!modal || !content) return;
   if (!user) {
-    toast('Пользователь не найден в текущем снимке', 'warning');
+    toast('\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u0432 \u0442\u0435\u043a\u0443\u0449\u0435\u043c \u0441\u043d\u0438\u043c\u043a\u0435', 'warning');
     return;
   }
+  _currentCardUserKey = getUserKey(user) || key;
   content.innerHTML = userCardHtml(user);
   modal.classList.remove('hidden');
   // Auto-load all tab data
   loadUserHistory(key);
   loadNotificationHistory(key);
+}
+
+async function loadSubHistoryTab() {
+  const el = document.getElementById('user-sub-history-tab');
+  if (!el || !_currentCardUserKey) return;
+  if (el.dataset.loaded === 'true') return; // Already loaded
+  el.dataset.loaded = 'true';
+  try {
+    const resp = await fetch('/api/sub-history?userKey=' + encodeURIComponent(_currentCardUserKey));
+    const data = await resp.json();
+    const records = data.records || [];
+    if (records.length === 0) {
+      el.innerHTML = '<div class="inv-sub-empty-big"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><p>\u041d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445 \u043e \u0437\u0430\u043f\u0440\u043e\u0441\u0430\u0445 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438</p><span>\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u044f\u0432\u044f\u0442\u0441\u044f \u043f\u043e\u0441\u043b\u0435 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u0438\u0445 \u0446\u0438\u043a\u043b\u043e\u0432 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438</span></div>';
+      return;
+    }
+    // Analyze
+    const platforms = new Set();
+    const buildIds = new Set();
+    const userAgents = new Set();
+    const ips = new Set();
+    const versions = new Set();
+    for (const r of records) {
+      if (r.platform) platforms.add(r.platform);
+      if (r.buildId) buildIds.add(r.buildId);
+      if (r.ua) userAgents.add(r.ua);
+      if (r.ip) ips.add(r.ip);
+      if (r.version) versions.add(r.version);
+    }
+    const hasMixedPlatforms = platforms.size >= 2;
+
+    let html = '';
+
+    // Alert banner
+    if (hasMixedPlatforms) {
+      html += '<div class="sub-alert-banner"><span class="sub-alert-icon">\u26a0\ufe0f</span><div><b>\u041e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u044b \u0440\u0430\u0437\u043d\u044b\u0435 \u041e\u0421: ' + [...platforms].join(', ') + '</b><br>\u041f\u0440\u0438\u0437\u043d\u0430\u043a \u0448\u0430\u0440\u0438\u043d\u0433\u0430 \u043a\u043b\u044e\u0447\u0430 \u2014 \u043e\u0434\u0438\u043d \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043e\u0431\u044b\u0447\u043d\u043e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442 \u043e\u0434\u043d\u0443 \u041e\u0421</div></div>';
+    }
+
+    // Stats cards
+    html += '<div class="sub-stats-grid">';
+    html += '<div class="sub-stat-card' + (hasMixedPlatforms ? ' sub-stat-danger' : '') + '"><div class="sub-stat-val">' + platforms.size + '</div><div class="sub-stat-lbl">\u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c</div></div>';
+    html += '<div class="sub-stat-card' + (buildIds.size > 3 ? ' sub-stat-warn' : '') + '"><div class="sub-stat-val">' + buildIds.size + '</div><div class="sub-stat-lbl">\u0423\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432</div></div>';
+    html += '<div class="sub-stat-card"><div class="sub-stat-val">' + versions.size + '</div><div class="sub-stat-lbl">\u0412\u0435\u0440\u0441\u0438\u0439</div></div>';
+    html += '<div class="sub-stat-card"><div class="sub-stat-val">' + ips.size + '</div><div class="sub-stat-lbl">IP</div></div>';
+    html += '<div class="sub-stat-card"><div class="sub-stat-val">' + records.length + '</div><div class="sub-stat-lbl">\u0417\u0430\u043f\u0440\u043e\u0441\u043e\u0432</div></div>';
+    html += '</div>';
+
+    // Platform badges
+    html += '<div class="sub-plat-section"><div class="sub-section-title">\u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u044b</div><div class="sub-plat-badges">';
+    for (const p of platforms) {
+      const icon = p === 'ios' ? '\ud83c\udf4e' : p === 'android' ? '\ud83e\udd16' : p === 'windows' ? '\ud83d\udda5\ufe0f' : p === 'macos' ? '\ud83d\udcbb' : '\ud83d\udcf1';
+      html += '<span class="sub-plat-badge">' + icon + ' ' + esc(p) + '</span>';
+    }
+    html += '</div></div>';
+
+    // Versions
+    if (versions.size > 0) {
+      html += '<div class="sub-plat-section"><div class="sub-section-title">\u0412\u0435\u0440\u0441\u0438\u0438 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u044f</div><div class="sub-plat-badges">';
+      for (const v of versions) {
+        html += '<span class="sub-ver-badge">v' + esc(v) + '</span>';
+      }
+      html += '</div></div>';
+    }
+
+    // Records table
+    html += '<div class="sub-section-title" style="margin-top:16px">\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b</div>';
+    html += '<div class="sub-records-table">';
+    html += '<div class="sub-rec-header"><span>\u0412\u0440\u0435\u043c\u044f</span><span>\u041e\u0421</span><span>IP</span><span>User-Agent</span></div>';
+    for (const r of records.slice(0, 20)) {
+      const date = new Date(r.ts);
+      const timeStr = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      const dateStr = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+      const platIcon = r.platform === 'ios' ? '\ud83c\udf4e' : r.platform === 'android' ? '\ud83e\udd16' : '\ud83d\udcf1';
+      html += '<div class="sub-rec-row">';
+      html += '<span class="sub-rec-time">' + dateStr + ' ' + timeStr + '</span>';
+      html += '<span class="sub-rec-plat">' + platIcon + ' ' + esc(r.platform || '?') + '</span>';
+      html += '<span class="sub-rec-ip">' + esc(r.ip || '') + '</span>';
+      html += '<span class="sub-rec-ua" title="' + escAttr(r.ua || '') + '">' + esc((r.ua || '').substring(0, 45)) + '</span>';
+      html += '</div>';
+    }
+    if (records.length > 20) {
+      html += '<div class="sub-rec-more">\u0438 \u0435\u0449\u0451 ' + (records.length - 20) + ' \u0437\u0430\u043f\u0438\u0441\u0435\u0439\u2026</div>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div class="inv-sub-empty">\u041e\u0448\u0438\u0431\u043a\u0430: ' + esc(e.message) + '</div>';
+  }
 }
 
 function closeUserModal(event) {
@@ -2000,77 +2093,6 @@ function renderInvestigationTab(data, userKey) {
       <div class="inv-linked-list">${rows.join('')}</div>
     </div>`);
   }
-
-  // Subscription request history (loaded async)
-  const subHistId = `sub-hist-${Date.now()}`;
-  parts.push(`<div class="inv-section">
-    <div class="inv-section-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> История запросов подписки</div>
-    <div id="${subHistId}" class="inv-sub-history"><span class="inv-loading">Загрузка…</span></div>
-  </div>`);
-  // Load sub history async
-  setTimeout(async () => {
-    const el = document.getElementById(subHistId);
-    if (!el) return;
-    try {
-      const resp = await fetch('/api/sub-history?userKey=' + encodeURIComponent(userKey));
-      const data = await resp.json();
-      const records = data.records || [];
-      if (records.length === 0) {
-        el.innerHTML = '<div class="inv-sub-empty">Нет данных о запросах подписки</div>';
-        return;
-      }
-      // Analyze platforms
-      const platforms = new Set();
-      const buildIds = new Set();
-      const userAgents = new Set();
-      const ips = new Set();
-      for (const r of records) {
-        if (r.platform) platforms.add(r.platform);
-        if (r.buildId) buildIds.add(r.buildId);
-        if (r.ua) userAgents.add(r.ua);
-        if (r.ip) ips.add(r.ip);
-      }
-      const hasMixedPlatforms = platforms.size >= 2;
-
-      let html = '<div class="inv-sub-stats">';
-      html += '<div class="inv-sub-stat' + (hasMixedPlatforms ? ' inv-sub-danger' : '') + '"><span class="inv-sub-stat-num">' + platforms.size + '</span><span class="inv-sub-stat-lbl">Платформ</span></div>';
-      html += '<div class="inv-sub-stat' + (buildIds.size > 3 ? ' inv-sub-warn' : '') + '"><span class="inv-sub-stat-num">' + buildIds.size + '</span><span class="inv-sub-stat-lbl">Устройств</span></div>';
-      html += '<div class="inv-sub-stat"><span class="inv-sub-stat-num">' + ips.size + '</span><span class="inv-sub-stat-lbl">IP</span></div>';
-      html += '<div class="inv-sub-stat"><span class="inv-sub-stat-num">' + records.length + '</span><span class="inv-sub-stat-lbl">Запросов</span></div>';
-      html += '</div>';
-
-      if (hasMixedPlatforms) {
-        html += '<div class="inv-sub-alert">⚠️ Обнаружены разные ОС: <b>' + [...platforms].join(', ') + '</b> — признак шаринга ключа</div>';
-      }
-
-      // Platform badges
-      html += '<div class="inv-sub-platforms">';
-      for (const p of platforms) {
-        const icon = p === 'ios' ? '🍎' : p === 'android' ? '🤖' : p === 'windows' ? '🖥️' : p === 'macos' ? '💻' : '📱';
-        html += '<span class="inv-sub-platform-badge">' + icon + ' ' + esc(p) + '</span>';
-      }
-      html += '</div>';
-
-      // Recent records table
-      html += '<div class="inv-sub-records">';
-      for (const r of records.slice(0, 12)) {
-        const date = new Date(r.ts);
-        const timeStr = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-        const dateStr = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
-        const platIcon = r.platform === 'ios' ? '🍎' : r.platform === 'android' ? '🤖' : '📱';
-        html += '<div class="inv-sub-record">';
-        html += '<span class="inv-sub-rec-time">' + dateStr + ' ' + timeStr + '</span>';
-        html += '<span class="inv-sub-rec-plat">' + platIcon + ' ' + esc(r.platform || '?') + '</span>';
-        html += '<span class="inv-sub-rec-ip">' + esc(r.ip || '') + '</span>';
-        html += '<span class="inv-sub-rec-ua" title="' + escAttr(r.ua || '') + '">' + esc((r.ua || '').substring(0, 40)) + '</span>';
-        html += '</div>';
-      }
-      html += '</div>';
-      el.innerHTML = html;
-    } catch (e) {
-      el.innerHTML = '<div class="inv-sub-empty">Ошибка загрузки: ' + esc(e.message) + '</div>';
-    }
-  }, 100);
 
   // Audit log
   if (data.auditLog && data.auditLog.length > 0) {
@@ -2428,6 +2450,10 @@ function userCardHtml(u) {
             ${IC._s('<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>', 14)}
             Устройства <span class="uc-tab-count">${hwidCount}</span>
           </button>
+          <button class="uc-tab" data-uctab="subscriptions" onclick="switchUcTab('subscriptions')">
+            ${IC._s('<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>', 14)}
+            Подписки
+          </button>
           <button class="uc-tab" data-uctab="actions" onclick="switchUcTab('actions')">
             ${IC._s('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>', 14)}
             Действия
@@ -2490,11 +2516,13 @@ function userCardHtml(u) {
           <div id="user-history-content" class="history-content">
             <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка истории…</p></div>
           </div>
-          <div id="user-investigation-content">
-            <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка…</p></div>
-          </div>
-          <div id="notification-history-content" class="notification-history">
-            <div class="loading-state" style="padding:16px"><div class="spinner-large"></div></div>
+          <div id="user-investigation-content"></div>
+        </div>
+
+        <!-- TAB: Подписки -->
+        <div class="uc-tab-panel" data-uctab-panel="subscriptions">
+          <div id="user-sub-history-tab" style="padding:18px">
+            <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка подписок…</p></div>
           </div>
         </div>
 
