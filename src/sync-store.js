@@ -324,6 +324,12 @@ function createStore(options = {}) {
     }
 
     cleanupOldData(ts);
+
+    // Save nodeMap if provided
+    if (snapshot.nodeMap && Object.keys(snapshot.nodeMap).length > 0) {
+      setMeta('node_map', snapshot.nodeMap);
+    }
+
     setMeta('last_snapshot', {
       ts,
       userCount: users.length,
@@ -437,6 +443,7 @@ function createStore(options = {}) {
       incidentStats: getIncidentStats(),
       relations: buildRelationGraph(users, geoByIp, activeIpWindows['30']),
       proxyData: ipChecker.getAllCached(),
+      nodeMap: getMeta('node_map', {}),
     };
   }
 

@@ -84,7 +84,7 @@ function createRemnawaveSync(options) {
       }
 
       const users = await fetchAllUsers();
-      const activeIps = await fetchActiveIps(users, warnings);
+      const { activeIps, nodeMap } = await fetchActiveIps(users, warnings);
       await enrichActiveIpGeo(activeIps, warnings);
       const hwidTop = await fetchHwidTop(warnings);
       const hwidDevices = await fetchHwidDevices(hwidTop, users, activeIps, warnings);
@@ -118,6 +118,7 @@ function createRemnawaveSync(options) {
         hwidTop,
         hwidDevices,
         proxyData,
+        nodeMap,
         warnings,
       });
 
@@ -217,7 +218,15 @@ function createRemnawaveSync(options) {
       nodes = extractArray(nodesRaw, ['nodes']);
     } catch (e) {
       warnings.push(`[nodes] ${e.message}`);
-      return activeIps;
+      return { activeIps, nodeMap: {} };
+    }
+
+    // Build nodeUuid -> name mapping
+    const nodeMap = {};
+    for (const node of nodes) {
+      const nUuid = node.uuid || node.id;
+      const nName = node.name || node.title || node.hostname || nUuid;
+      if (nUuid) nodeMap[String(nUuid)] = String(nName);
     }
 
     const nodeIps = new Set(
@@ -278,7 +287,7 @@ function createRemnawaveSync(options) {
       activeIps[key] = Object.values(activeIps[key]);
     }
 
-    return activeIps;
+    return { activeIps, nodeMap };
   }
 
   async function enrichActiveIpGeo(activeIps, warnings) {

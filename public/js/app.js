@@ -482,6 +482,7 @@ function applyCachedState(snapshot) {
     incidents: Array.isArray(snapshot.incidents) ? snapshot.incidents : [],
     incidentStats: snapshot.incidentStats || {},
     relations: snapshot.relations || null,
+    nodeMap: snapshot.nodeMap || {},
   };
   state.ipHistory = (Array.isArray(snapshot.ipHistory) ? snapshot.ipHistory : []).map((snap) => {
     const ips = {};
@@ -2253,11 +2254,12 @@ function userCardHtml(u) {
     const connBadge = connType
       ? `<span class="conn-type conn-type-${connType.toLowerCase().includes('cell') ? 'cell' : connType.toLowerCase().includes('cable') || connType.toLowerCase().includes('dsl') ? 'cable' : connType.toLowerCase().includes('corp') ? 'corp' : 'other'}">${esc(connType)}</span>`
       : '';
-    const nodeLabel = d.nodeUuid ? d.nodeUuid.slice(0, 8) : '';
+    const nodeMap = (state.data && state.data.nodeMap) || {};
+    const nodeName = d.nodeUuid ? (nodeMap[d.nodeUuid] || d.nodeUuid.slice(0, 8)) : '';
     return `<div class="ip-row">
       <code class="ip-row-addr">${esc(d.ip)}</code>
       ${ls ? `<span class="lastseen lastseen-${ls.level}">${ls.text}</span>` : ''}
-      ${nodeLabel ? `<span class="ip-node-badge" title="Node: ${escAttr(d.nodeUuid)}">${esc(nodeLabel)}</span>` : ''}
+      ${nodeName ? `<span class="ip-node-badge" title="${escAttr(d.nodeUuid)}">${esc(nodeName)}</span>` : ''}
       ${connBadge}
       ${country ? `<span class="ip-row-geo">${esc(country)}${city ? ' ' + esc(city) : ''}</span>` : ''}
       ${asn ? `<span class="ip-row-asn">${esc(asn)}${org ? ' · ' + esc(org) : ''}</span>` : ''}
