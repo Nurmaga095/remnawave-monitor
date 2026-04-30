@@ -1,14 +1,16 @@
-// ─── Server-side Detection Module v4 — Premium Multi-Signal ────
-// 9 сигналов, 4 категории, 4 уровня:
+// ─── Server-side Detection Module v5 — Premium Multi-Signal ────
+// 12 сигналов, 4 категории, 4 уровня:
 //
 // DETERMINISTIC: hwid_over_limit
-// STRONG: hwid_churn, temporal_247, multi_city, impossible_travel, velocity_extreme, fingerprint_cluster
+// STRONG: hwid_churn, temporal_247, multi_city, impossible_travel, velocity_extreme,
+//         fingerprint_cluster, simultaneous_distinct_networks, extracted_key_suspected,
+//         multi_node_simultaneous
 // WEAK: suspicious_travel, velocity_high, fingerprint_match, isp_mix, behavior_shift
 //
-// 🔴 critical (60-100) — HWID > лимит
-// 🟠 high     (40-59)  — 2+ strong сигнала
-// 🟡 warning  (20-39)  — 1 strong или 3+ weak
-// 🟢 clean    (0-19)   — нет угроз
+// critical (60-100) — HWID > лимит
+// high     (40-59)  — 2+ strong сигнала
+// warning  (20-39)  — 1 strong или 3+ weak
+// clean    (0-19)   — нет угроз
 
 const GLOBAL_HWID_FALLBACK = 2;
 const INACTIVE_OFFLINE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -140,6 +142,18 @@ function createDetector(options = {}) {
     // ═══ WEAK: Behavioral Shift (#6) ═══
     const behaviorSignal = detectBehavioralShift(u, state, activityMap, keys);
     if (behaviorSignal) signals.push(behaviorSignal);
+
+    // ═══ STRONG: Simultaneous Distinct Networks (#7) ═══
+    const simNetSignal = detectSimultaneousNetworks(u, state, keys);
+    if (simNetSignal) signals.push(simNetSignal);
+
+    // ═══ STRONG: Extracted VLESS Key Suspected (#8) ═══
+    const extractedSignal = detectExtractedKey(u, state, keys, hwidLimit, hwid);
+    if (extractedSignal) signals.push(extractedSignal);
+
+    // ═══ STRONG: Multi-Node Simultaneous (#9) ═══
+    const multiNodeSignal = detectMultiNodeSimultaneous(u, state, keys, hwidLimit);
+    if (multiNodeSignal) signals.push(multiNodeSignal);
 
     const context = buildContext(u, state);
     return { signals, context };
@@ -371,6 +385,182 @@ function createDetector(options = {}) {
           reason: `рост активных часов: ${firstHalf.size}ч → ${secondHalf.size}ч (${ratio.toFixed(1)}x)` };
       }
     }
+    return null;
+  }
+
+  // ─── #7 Simultaneous Distinct Networks ──────────────────────
+  // Measures IP overlap across different ASNs/countries over time.
+  // Not just "3 IPs", but "3 distinct ASNs active simultaneously across snapshots".
+  function detectSimultaneousNetworks(u, state, keys) {
+    const history = state.ipHistory || [];
+    if (history.length < 3) return null;
+
+    // Track ASN sets across recent snapshots to find persistent overlap
+    let overlapCount = 0;
+    let maxConcurrentAsns = 0;
+    let maxConcurrentCountries = 0;
+    let overlapDetail = '';
+
+    // Check recent snapshots (last 12 = ~1 hour at 5-min intervals)
+    const recentHistory = history.slice(-12);
+
+    for (const snap of recentHistory) {
+      const asns = new Set();
+      const countries = new Set();
+      for (const key of keys) {
+        const ips = snap.ips && snap.ips[key];
+        if (!Array.isArray(ips)) continue;
+        for (const ip of ips) {
+          // Look up geo from current activeIps
+          const activeEntries = (state.activeIps || {})[key] || [];
+          const entry = activeEntries.find(e => e && e.ip === ip);
+          if (entry && entry.geo) {
+            if (entry.geo.asn) asns.add(String(entry.geo.asn));
+            if (entry.geo.countryCode) countries.add(entry.geo.countryCode);
+          }
+        }
+      }
+      if (asns.size >= 2) {
+        overlapCount++;
+        if (asns.size > maxConcurrentAsns) {
+          maxConcurrentAsns = asns.size;
+          maxConcurrentCountries = countries.size;
+          overlapDetail = `${asns.size} ASN, ${countries.size} стран`;
+        }
+      }
+    }
+
+    // Persistent overlap across multiple snapshots = strong evidence
+    if (overlapCount >= 3 && maxConcurrentAsns >= 3) {
+      return {
+        id: 'simultaneous_distinct_networks', category: 'strong', active: true,
+        points: 25,
+        reason: `${overlapCount} снимков с ${overlapDetail} одновременно (${overlapCount * 5} мин пересечения)`,
+      };
+    }
+    if (overlapCount >= 2 && maxConcurrentAsns >= 2 && maxConcurrentCountries >= 2) {
+      return {
+        id: 'simultaneous_distinct_networks', category: 'strong', active: true,
+        points: 20,
+        reason: `${overlapCount} снимков с разными сетями из ${maxConcurrentCountries} стран`,
+      };
+    }
+    return null;
+  }
+
+  // ─── #8 Extracted VLESS Key Detection ───────────────────────
+  // HWID is normal, but UUID simultaneously used from multiple distinct ASNs.
+  // This catches key sharing where the key was extracted from the subscription
+  // and used directly in a VLESS client without HWID reporting.
+  function detectExtractedKey(u, state, keys, hwidLimit, hwidCount) {
+    // Only fire if HWID is NOT over limit (otherwise hwid_over_limit handles it)
+    if (hwidCount > hwidLimit) return null;
+
+    // Collect current ASNs + countries for this user
+    const asns = new Set();
+    const countries = new Set();
+    let totalIps = 0;
+
+    for (const key of keys) {
+      const ips = (state.activeIps || {})[key];
+      if (!Array.isArray(ips)) continue;
+      for (const entry of ips) {
+        totalIps++;
+        const geo = (typeof entry === 'object') ? (entry && entry.geo) : null;
+        if (!geo) continue;
+        if (geo.asn) asns.add(String(geo.asn));
+        if (geo.countryCode) countries.add(geo.countryCode);
+      }
+    }
+
+    // Need at least 3 distinct ASNs AND 2 countries to be suspicious
+    // (2 ASNs in same country is normal: WiFi + mobile)
+    if (asns.size >= 3 && countries.size >= 2 && totalIps >= 3) {
+      // Check ipHistory for persistence (not just a momentary blip)
+      const history = state.ipHistory || [];
+      let multiAsnSnapshots = 0;
+      for (const snap of history.slice(-6)) {
+        const snapAsns = new Set();
+        for (const key of keys) {
+          const ips = snap.ips && snap.ips[key];
+          if (!Array.isArray(ips)) continue;
+          for (const ip of ips) {
+            const activeEntries = (state.activeIps || {})[key] || [];
+            const entry = activeEntries.find(e => e && e.ip === ip);
+            if (entry && entry.geo && entry.geo.asn) snapAsns.add(String(entry.geo.asn));
+          }
+        }
+        if (snapAsns.size >= 3) multiAsnSnapshots++;
+      }
+
+      if (multiAsnSnapshots >= 2) {
+        return {
+          id: 'extracted_key_suspected', category: 'strong', active: true,
+          points: 25,
+          reason: `HWID ${hwidCount}/${hwidLimit} (норма), но ${asns.size} ASN из ${countries.size} стран одновременно — вероятно ключ вытащен из подписки`,
+        };
+      }
+
+      return {
+        id: 'extracted_key_suspected', category: 'strong', active: true,
+        points: 15,
+        reason: `HWID в норме, но ${asns.size} ASN и ${countries.size} стран одновременно`,
+      };
+    }
+
+    return null;
+  }
+
+  // ─── #9 Multi-Node Simultaneous Detection ──────────────────
+  // Same user active on more DIFFERENT nodes than their HWID limit allows.
+  // If limit=3 and active on 3 nodes — normal.
+  // If limit=2 and active on 4 nodes from different IPs — sharing.
+  function detectMultiNodeSimultaneous(u, state, keys, hwidLimit) {
+    const nodeIps = new Map(); // nodeUuid -> Set of IPs
+
+    for (const key of keys) {
+      const ips = (state.activeIps || {})[key];
+      if (!Array.isArray(ips)) continue;
+      for (const entry of ips) {
+        if (!entry || !entry.nodeUuid || !entry.ip) continue;
+        if (!nodeIps.has(entry.nodeUuid)) nodeIps.set(entry.nodeUuid, new Set());
+        nodeIps.get(entry.nodeUuid).add(entry.ip);
+      }
+    }
+
+    const nodeCount = nodeIps.size;
+    if (nodeCount <= hwidLimit) return null;
+
+    // Collect country/ASN diversity across nodes
+    const nodeCountries = new Set();
+    const nodeAsns = new Set();
+    for (const key of keys) {
+      const ips = (state.activeIps || {})[key];
+      if (!Array.isArray(ips)) continue;
+      for (const entry of ips) {
+        if (!entry || !entry.geo) continue;
+        if (entry.geo.countryCode) nodeCountries.add(entry.geo.countryCode);
+        if (entry.geo.asn) nodeAsns.add(String(entry.geo.asn));
+      }
+    }
+
+    // Different countries from different nodes = very strong
+    if (nodeCountries.size >= 2 && nodeCount > hwidLimit) {
+      return {
+        id: 'multi_node_simultaneous', category: 'strong', active: true,
+        points: 30,
+        reason: `одновременно на ${nodeCount} нодах (лимит ${hwidLimit}) из ${nodeCountries.size} стран, ${nodeAsns.size} ASN`,
+      };
+    }
+
+    if (nodeCount > hwidLimit + 1) {
+      return {
+        id: 'multi_node_simultaneous', category: 'strong', active: true,
+        points: 20,
+        reason: `одновременно на ${nodeCount} нодах при лимите ${hwidLimit}`,
+      };
+    }
+
     return null;
   }
 

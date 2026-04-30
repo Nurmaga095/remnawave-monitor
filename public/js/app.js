@@ -2208,6 +2208,9 @@ function userCardHtml(u) {
         isp_datacenter_heavy: 'Множество VPN/Proxy IP',
         isp_mix: 'Микс типов ISP',
         behavior_shift: 'Резкая смена поведения',
+        simultaneous_distinct_networks: 'Одновременные разные сети',
+        extracted_key_suspected: 'Подозрение: ключ извлечён',
+        multi_node_simultaneous: 'Мульти-нодовое использование',
       };
 
       const titleText = signalTitles[s.id] || s.reason || s.id;
@@ -3210,6 +3213,9 @@ const INCIDENT_REASON_LABELS = {
   hwid_churn_moderate: 'Повышенная ротация устройств',
   temporal_247: 'Активность почти 24/7',
   server_detection: 'Сработала серверная детекция',
+  simultaneous_distinct_networks: 'Одновременные разные сети (IP overlap)',
+  extracted_key_suspected: 'Подозрение на извлечённый ключ',
+  multi_node_simultaneous: 'Мульти-нодовое использование (сверх лимита)',
 };
 
 function incidentRiskLabel(score) {
