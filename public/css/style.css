@@ -417,6 +417,17 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 .signal-card-wk .signal-cat { background: rgba(234,179,8,0.1); color: #ca8a04; }
 .signal-card-ind .signal-cat { background: rgba(100,116,139,0.12); color: var(--text3); }
 .signal-pts { font-weight: 800; font-size: 11px; color: var(--text3); margin-left: auto; }
+/* Confidence */
+.confidence-row { display: flex; align-items: center; gap: 10px; padding: 0 16px 4px; }
+.conf-level { font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; }
+.conf-desc { font-size: 12px; color: var(--text3); }
+.conf-types { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 12px; }
+.conf-type { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 5px; background: rgba(99,102,241,0.08); color: var(--accent); border: 1px solid rgba(99,102,241,0.18); }
+/* Mitigating factors */
+.mitigating-list { padding: 8px 16px 12px; display: flex; flex-direction: column; gap: 6px; }
+.mitigating-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--green); }
+.mitigating-item svg { flex-shrink: 0; margin-top: 1px; }
+.mitigating-item span { color: var(--text2); }
 /* Legacy signal-chip kept for suspect cards */
 .signal-chips { padding: 14px 18px; display: flex; flex-wrap: wrap; gap: 8px; }
 .signal-chip { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; font-size: 12px; border: 1px solid; }

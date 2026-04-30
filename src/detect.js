@@ -39,6 +39,9 @@ function createDetector(options = {}) {
 
       if (level === 'clean') continue;
 
+      const confidence = computeConfidence(signals, context);
+      const mitigating = computeMitigatingFactors(u, state, signals, context);
+
       const entry = {
         key,
         username: u.username || u.name || '',
@@ -48,6 +51,8 @@ function createDetector(options = {}) {
         ipCount: context.ipCount || 0,
         riskScore: score,
         riskLevel: level,
+        confidence,
+        mitigating,
         excess: Math.max(0, hwidCountForUser(u, state) - getUserHwidLimit(u)),
         signals: signals.filter(s => s.active).map(s => ({
           id: s.id, category: s.category, points: s.points, reason: s.reason,
@@ -154,6 +159,10 @@ function createDetector(options = {}) {
     // ═══ STRONG: Multi-Node Simultaneous (#9) ═══
     const multiNodeSignal = detectMultiNodeSimultaneous(u, state, keys, hwidLimit);
     if (multiNodeSignal) signals.push(multiNodeSignal);
+
+    // ═══ WEAK: Schedule Pattern Detection (#10) ═══
+    const scheduleSignal = detectSchedulePattern(u, state, keys, hwidLimit);
+    if (scheduleSignal) signals.push(scheduleSignal);
 
     const context = buildContext(u, state);
     return { signals, context };
@@ -619,7 +628,217 @@ function createDetector(options = {}) {
     return { score: 0, level: 'clean' };
   }
 
-  // ─── Build informational context ───────────────────────────
+  // ─── Confidence Score ──────────────────────────────────────────
+  // Counts independent evidence types to measure proof strength.
+  // Each evidence category is independent (geo, temporal, device, network, behavioral).
+  function computeConfidence(signals, context) {
+    const active = signals.filter(s => s.active);
+    if (active.length === 0) return { score: 0, level: 'none', types: [] };
+
+    const evidenceTypes = new Set();
+    for (const s of active) {
+      if (['hwid_over_limit', 'hwid_churn_high', 'hwid_churn_moderate'].includes(s.id))
+        evidenceTypes.add('device');
+      if (['multi_city_extreme', 'multi_city_suspect', 'impossible_travel', 'suspicious_travel'].includes(s.id))
+        evidenceTypes.add('geographic');
+      if (['temporal_247', 'behavior_shift', 'schedule_pattern'].includes(s.id))
+        evidenceTypes.add('temporal');
+      if (['simultaneous_distinct_networks', 'extracted_key_suspected', 'multi_node_simultaneous'].includes(s.id))
+        evidenceTypes.add('network');
+      if (['velocity_extreme', 'velocity_high'].includes(s.id))
+        evidenceTypes.add('traffic');
+      if (['fingerprint_cluster', 'fingerprint_match', 'shared_ip_cluster'].includes(s.id))
+        evidenceTypes.add('identity');
+      if (['isp_datacenter_heavy', 'isp_mix'].includes(s.id))
+        evidenceTypes.add('infrastructure');
+    }
+
+    const typeCount = evidenceTypes.size;
+    const types = Array.from(evidenceTypes);
+
+    let score, level;
+    if (typeCount >= 4) { score = 95; level = 'confirmed'; }
+    else if (typeCount === 3) { score = 85; level = 'high'; }
+    else if (typeCount === 2) { score = 60; level = 'medium'; }
+    else { score = 30; level = 'low'; }
+
+    // Boost if deterministic signal present
+    if (active.some(s => s.category === 'deterministic')) {
+      score = Math.min(99, score + 10);
+    }
+
+    return { score, level, types };
+  }
+
+  // ─── Mitigating Factors (White Explanations) ──────────────────
+  // Shows reasons why the signals might be false positives.
+  function computeMitigatingFactors(u, state, signals, context) {
+    const factors = [];
+    const active = signals.filter(s => s.active);
+    if (active.length === 0) return factors;
+
+    const keys = getUserAliases(u);
+
+    // Check if IPs are from mobile carriers (normal to change IP)
+    let mobileIpCount = 0;
+    let totalGeoIps = 0;
+    for (const key of keys) {
+      const ips = (state.activeIps || {})[key];
+      if (!Array.isArray(ips)) continue;
+      for (const entry of ips) {
+        const geo = entry && entry.geo;
+        if (!geo) continue;
+        totalGeoIps++;
+        if (geo.connectionType && geo.connectionType.toLowerCase().includes('cell')) {
+          mobileIpCount++;
+        }
+      }
+    }
+
+    if (mobileIpCount > 0) {
+      factors.push({
+        id: 'mobile_carrier',
+        text: `${mobileIpCount} IP от мобильного оператора — частая смена IP нормальна`,
+      });
+    }
+
+    // All IPs from same country
+    if (context.countryCount === 1 && context.ipCount >= 2) {
+      factors.push({
+        id: 'same_country',
+        text: 'Все IP из одной страны — может быть один человек с несколькими провайдерами',
+      });
+    }
+
+    // HWID well within limit
+    const hwidLimit = getUserHwidLimit(u);
+    const hwidCount = hwidCountForUser(u, state);
+    if (hwidCount <= 1 && hwidLimit >= 2) {
+      factors.push({
+        id: 'low_hwid',
+        text: `Только ${hwidCount} устройство из ${hwidLimit} — нет признаков мультидевайса`,
+      });
+    }
+
+    // Low traffic might indicate reconnect, not real usage
+    const traffic = Number(u.usedTrafficBytes || u.usedTraffic || 0);
+    const median = state.trafficMedian || 0;
+    if (median > 0 && traffic < median * 0.5) {
+      factors.push({
+        id: 'low_traffic',
+        text: 'Трафик ниже медианы — возможно reconnect, а не реальное использование',
+      });
+    }
+
+    // Only residential IPs (no datacenter/hosting)
+    if (context.hostingIpCount === 0 && context.proxyIpCount === 0 && context.vpnIpCount === 0 && totalGeoIps > 0) {
+      factors.push({
+        id: 'all_residential',
+        text: 'Все IP резидентные (домашние/мобильные) — нет VPN/хостинг признаков',
+      });
+    }
+
+    // Short reconnect window (IPs might be transitional)
+    if (context.ipCount === 2 && context.asnCount <= 2 && context.countryCount === 1) {
+      factors.push({
+        id: 'possible_reconnect',
+        text: '2 IP, 1 страна — может быть обычная смена IP при reconnect',
+      });
+    }
+
+    return factors;
+  }
+
+  // ─── #10 Schedule Pattern Detection ───────────────────────────
+  // Detects recurring daily patterns where different ASNs appear at
+  // consistent time slots, suggesting multiple people on a schedule.
+  function detectSchedulePattern(u, state, keys, hwidLimit) {
+    const history = state.ipHistory || [];
+    if (history.length < 20) return null; // need decent history
+
+    // Group snapshots by hour-of-day and track which ASNs appear at each hour
+    const hourAsns = {}; // hour -> Set of ASNs
+    const hourCountries = {}; // hour -> Set of countries
+
+    for (const snap of history) {
+      const hour = new Date(snap.ts).getUTCHours();
+      if (!hourAsns[hour]) { hourAsns[hour] = new Set(); hourCountries[hour] = new Set(); }
+
+      for (const key of keys) {
+        const ips = snap.ips && snap.ips[key];
+        if (!Array.isArray(ips) && !(ips && ips.size)) continue;
+        const ipList = Array.isArray(ips) ? ips : Array.from(ips);
+        for (const ip of ipList) {
+          const activeEntries = (state.activeIps || {})[key] || [];
+          const entry = activeEntries.find(e => e && e.ip === ip);
+          if (entry && entry.geo) {
+            if (entry.geo.asn) hourAsns[hour].add(String(entry.geo.asn));
+            if (entry.geo.countryCode) hourCountries[hour].add(entry.geo.countryCode);
+          }
+        }
+      }
+    }
+
+    // Check if different time blocks have different dominant ASNs
+    const blocks = [
+      { name: 'утро', hours: [5, 6, 7, 8, 9, 10, 11] },
+      { name: 'день', hours: [12, 13, 14, 15, 16, 17] },
+      { name: 'вечер', hours: [18, 19, 20, 21, 22, 23] },
+      { name: 'ночь', hours: [0, 1, 2, 3, 4] },
+    ];
+
+    const blockAsns = [];
+    for (const block of blocks) {
+      const asns = new Set();
+      const countries = new Set();
+      for (const h of block.hours) {
+        if (hourAsns[h]) hourAsns[h].forEach(a => asns.add(a));
+        if (hourCountries[h]) hourCountries[h].forEach(c => countries.add(c));
+      }
+      if (asns.size > 0) {
+        blockAsns.push({ name: block.name, asns, countries });
+      }
+    }
+
+    if (blockAsns.length < 2) return null;
+
+    // Check if blocks have significantly different ASN sets
+    let exclusiveBlocks = 0;
+    let differentCountryBlocks = 0;
+    const allBlockCountries = new Set();
+
+    for (let i = 0; i < blockAsns.length; i++) {
+      for (let j = i + 1; j < blockAsns.length; j++) {
+        // Count ASNs that appear in block i but NOT in block j
+        let exclusive = 0;
+        for (const asn of blockAsns[i].asns) {
+          if (!blockAsns[j].asns.has(asn)) exclusive++;
+        }
+        for (const asn of blockAsns[j].asns) {
+          if (!blockAsns[i].asns.has(asn)) exclusive++;
+        }
+        if (exclusive >= 2) exclusiveBlocks++;
+      }
+      blockAsns[i].countries.forEach(c => allBlockCountries.add(c));
+      if (blockAsns[i].countries.size >= 2) differentCountryBlocks++;
+    }
+
+    // Only flag if exclusive ASN count exceeds HWID limit
+    const totalExclusiveAsns = new Set();
+    for (const b of blockAsns) b.asns.forEach(a => totalExclusiveAsns.add(a));
+    if (totalExclusiveAsns.size <= hwidLimit) return null;
+
+    if (exclusiveBlocks >= 2 && allBlockCountries.size >= 2) {
+      const blockNames = blockAsns.map(b => b.name).join(', ');
+      return {
+        id: 'schedule_pattern', category: 'weak', active: true,
+        points: 15,
+        reason: `разные ASN по расписанию (${blockNames}), ${totalExclusiveAsns.size} ASN из ${allBlockCountries.size} стран > лимит ${hwidLimit}`,
+      };
+    }
+
+    return null;
+  }
   function buildContext(u, state) {
     const keys = getUserAliases(u);
     let ipCount = 0;

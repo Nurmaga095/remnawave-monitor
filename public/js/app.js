@@ -2212,6 +2212,7 @@ function userCardHtml(u) {
         simultaneous_distinct_networks: 'Одновременные разные сети',
         extracted_key_suspected: 'Подозрение: ключ извлечён',
         multi_node_simultaneous: 'Мульти-нодовое использование',
+        schedule_pattern: 'Паттерн по расписанию',
       };
 
       const titleText = signalTitles[s.id] || s.reason || s.id;
@@ -2230,6 +2231,46 @@ function userCardHtml(u) {
       <div class="uc-section-head"><span>Сигналы детекции</span><span class="uc-badge">${serverResult.signals.length}</span></div>
       <div class="signal-cards">${chips}</div>
     </div>`;
+
+    // Confidence badge
+    const conf = serverResult.confidence;
+    if (conf && conf.score > 0) {
+      const confColor = conf.level === 'confirmed' ? 'var(--red)'
+        : conf.level === 'high' ? '#f97316'
+        : conf.level === 'medium' ? 'var(--yellow)'
+        : 'var(--text3)';
+      const confLabel = conf.level === 'confirmed' ? 'подтверждено'
+        : conf.level === 'high' ? 'высокая'
+        : conf.level === 'medium' ? 'средняя'
+        : 'низкая';
+      const typeLabels = {
+        device: 'устройство', geographic: 'гео', temporal: 'время',
+        network: 'сеть', traffic: 'трафик', identity: 'идентификация',
+        infrastructure: 'инфраструктура',
+      };
+      const typeChips = (conf.types || []).map(t => `<span class="conf-type">${esc(typeLabels[t] || t)}</span>`).join('');
+      signalsHtml += `<div class="uc-section">
+        <div class="uc-section-head"><span>Уверенность</span><span class="uc-badge" style="background:${confColor};color:#fff">${conf.score}%</span></div>
+        <div class="confidence-row">
+          <span class="conf-level" style="color:${confColor}">${confLabel}</span>
+          <span class="conf-desc">${conf.types.length} независимых типов доказательств</span>
+        </div>
+        <div class="conf-types">${typeChips}</div>
+      </div>`;
+    }
+
+    // Mitigating factors (white explanations)
+    const mitigating = serverResult.mitigating;
+    if (Array.isArray(mitigating) && mitigating.length > 0) {
+      const mItems = mitigating.map(m => `<div class="mitigating-item">
+        ${IC._s('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>', 14)}
+        <span>${esc(m.text)}</span>
+      </div>`).join('');
+      signalsHtml += `<div class="uc-section">
+        <div class="uc-section-head"><span>Что может быть нормой</span></div>
+        <div class="mitigating-list">${mItems}</div>
+      </div>`;
+    }
   }
 
   // Risk score
@@ -3220,6 +3261,7 @@ const INCIDENT_REASON_LABELS = {
   simultaneous_distinct_networks: 'Одновременные разные сети (IP overlap)',
   extracted_key_suspected: 'Подозрение на извлечённый ключ',
   multi_node_simultaneous: 'Мульти-нодовое использование (сверх лимита)',
+  schedule_pattern: 'Паттерн по расписанию (разные ASN по времени суток)',
 };
 
 function incidentRiskLabel(score) {
