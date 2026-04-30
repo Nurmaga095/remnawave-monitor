@@ -2,6 +2,57 @@
 const DEBUG = new URLSearchParams(window.location.search).has('debug') || localStorage.getItem('rwm_debug') === '1';
 const debugLog = (...args) => { if (DEBUG) console.log(...args); };
 
+// ─── SVG Icon Library (replaces emoji) ─────────────────────────────
+const IC = {
+  // Risk level dots (colored via CSS)
+  dot: (color) => `<span class="ic-dot" style="background:${color}"></span>`,
+  // Lucide-style icons (18x18, stroke-based)
+  _s: (d, w = 18) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`,
+  // Signal icons
+  hwid: null, churn: null, clock247: null, globe: null, plane: null, zap: null,
+  link: null, server: null, building: null, chart: null, ban: null,
+  warn: null, check: null, clipboard: null, shield: null, edit: null,
+  trash: null, test: null, bolt: null, timer: null, phone: null,
+  plug: null, wifi: null, search: null, refresh: null,
+};
+// Deferred init to keep const short
+(function() {
+  const s = IC._s;
+  IC.hwid =     s('<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>');
+  IC.churn =    s('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>');
+  IC.clock247 = s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
+  IC.globe =    s('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>');
+  IC.plane =    s('<path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.4-.1.9.3 1.1L11 12l-2 3H6l-2 2 4-1 4-1 2 2v3l2-2-1-4 3-2 4.2 7.3c.2.4.7.5 1.1.3l.5-.3c.4-.2.5-.6.4-1.1z"/>');
+  IC.zap =      s('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>');
+  IC.link =     s('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>');
+  IC.server =   s('<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>');
+  IC.building = s('<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/>');
+  IC.chart =    s('<path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/>');
+  IC.ban =      s('<circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>');
+  IC.warn =     s('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');
+  IC.check =    s('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>');
+  IC.clipboard= s('<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>');
+  IC.shield =   s('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>');
+  IC.edit =     s('<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>');
+  IC.trash =    s('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>');
+  IC.test =     s('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/>');
+  IC.bolt =     s('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>');
+  IC.timer =    s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
+  IC.phone =    s('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>');
+  IC.plug =     s('<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a6 6 0 0 1-12 0V8z"/>');
+  IC.wifi =     s('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>');
+  IC.search =   s('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
+  IC.refresh =  s('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>');
+  IC.note =     s('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>');
+  IC.traffic =  s('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+  IC.bell =     s('<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>');
+  IC.activity = s('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>');
+  IC.map =      s('<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>');
+  IC.users =    s('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>');
+  IC.unban =    s('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>');
+  IC.send =     s('<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>');
+})();
+
 // ─── Theme ────────────────────────────────────────────────────────
 (function initTheme() {
   const saved = localStorage.getItem('rwm_theme');
@@ -1536,11 +1587,11 @@ function renderDashboard() {
     const openIncidents = Number(d.incidentStats && d.incidentStats.open || 0);
     const totalTraffic = state.users.reduce((s, u) => s + Number(u.usedTrafficBytes || u.usedTraffic || (u.userTraffic && u.userTraffic.usedTrafficBytes) || 0), 0);
     mgmtEl.innerHTML = `
-      <div class="mgmt-row"><span class="mgmt-icon">📋</span><span class="mgmt-label">Открытые инциденты</span><span class="mgmt-val ${openIncidents > 0 ? 'mgmt-red' : ''}">${openIncidents}</span></div>
-      <div class="mgmt-row"><span class="mgmt-icon">🚫</span><span class="mgmt-label">Заблокировано</span><span class="mgmt-val ${bannedCount > 0 ? 'mgmt-red' : ''}">${bannedCount}</span></div>
-      <div class="mgmt-row"><span class="mgmt-icon">🛡️</span><span class="mgmt-label">В белом списке</span><span class="mgmt-val ${wlCount > 0 ? 'mgmt-green' : ''}">${wlCount}</span></div>
-      <div class="mgmt-row"><span class="mgmt-icon">📝</span><span class="mgmt-label">С заметками</span><span class="mgmt-val">${notesCount}</span></div>
-      <div class="mgmt-row"><span class="mgmt-icon">📊</span><span class="mgmt-label">Общий трафик</span><span class="mgmt-val">${fmtBytes(totalTraffic)}</span></div>
+      <div class="mgmt-row"><span class="mgmt-icon">${IC.clipboard}</span><span class="mgmt-label">Открытые инциденты</span><span class="mgmt-val ${openIncidents > 0 ? 'mgmt-red' : ''}">${openIncidents}</span></div>
+      <div class="mgmt-row"><span class="mgmt-icon">${IC.ban}</span><span class="mgmt-label">Заблокировано</span><span class="mgmt-val ${bannedCount > 0 ? 'mgmt-red' : ''}">${bannedCount}</span></div>
+      <div class="mgmt-row"><span class="mgmt-icon">${IC.shield}</span><span class="mgmt-label">В белом списке</span><span class="mgmt-val ${wlCount > 0 ? 'mgmt-green' : ''}">${wlCount}</span></div>
+      <div class="mgmt-row"><span class="mgmt-icon">${IC.note}</span><span class="mgmt-label">С заметками</span><span class="mgmt-val">${notesCount}</span></div>
+      <div class="mgmt-row"><span class="mgmt-icon">${IC.chart}</span><span class="mgmt-label">Общий трафик</span><span class="mgmt-val">${fmtBytes(totalTraffic)}</span></div>
     `;
   }
 
@@ -1774,7 +1825,7 @@ function showConfirmDialog({ title, message, detail, warning, onConfirm, onCance
       <div class="confirm-title">${title || 'Подтверждение'}</div>
       ${message ? `<div class="confirm-message">${message}</div>` : ''}
       ${detail ? `<div class="confirm-detail">${detail}</div>` : ''}
-      ${warning ? `<div class="confirm-warning">⚠️ ${warning}</div>` : ''}
+      ${warning ? `<div class="confirm-warning">${IC.warn} ${warning}</div>` : ''}
       <div class="confirm-buttons">
         <button class="confirm-btn confirm-btn-cancel" id="confirm-no">Отмена</button>
         <button class="confirm-btn ${btnClass}" id="confirm-yes">${confirmText || 'Подтвердить'}</button>
@@ -1829,7 +1880,7 @@ async function executeUuidReset(userUuid, newUuid) {
     setTimeout(() => loadAll(), 2000);
   } catch (e) {
     toast(`Ошибка смены UUID: ${e.message}`, 'error');
-    if (btn) { btn.disabled = false; btn.innerHTML = '🔄 Сменить UUID'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = IC.churn + ' Сменить UUID'; }
   }
 }
 
@@ -1971,7 +2022,8 @@ function renderAuditLog(entries) {
     const dateStr = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
     const timeStr = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     const levelCls = e.riskLevel === 'critical' ? 'audit-red' : e.riskLevel === 'high' ? 'audit-orange' : e.riskLevel === 'warning' ? 'audit-yellow' : 'audit-green';
-    const levelIcon = e.riskLevel === 'critical' ? '🔴' : e.riskLevel === 'high' ? '🟠' : e.riskLevel === 'warning' ? '🟡' : '🟢';
+    const levelColor = e.riskLevel === 'critical' ? 'var(--red)' : e.riskLevel === 'high' ? '#f97316' : e.riskLevel === 'warning' ? 'var(--yellow)' : 'var(--green)';
+    const levelIcon = IC.dot(levelColor);
     return `<div class="inv-audit-row">
       <span class="inv-audit-time">${dateStr} ${timeStr}</span>
       <span class="inv-audit-level ${levelCls}">${levelIcon} ${esc(e.riskLevel)}</span>
@@ -2038,7 +2090,7 @@ function renderInvestigationEvents(events) {
       : event.type && (event.type.includes('notification') || event.type.includes('warn')) ? 'warn'
       : event.type && event.type.includes('resolved') ? 'ok'
       : 'info';
-    const icon = cls === 'danger' ? '🚫' : cls === 'warn' ? '⚠️' : cls === 'ok' ? '✅' : '📋';
+    const icon = cls === 'danger' ? IC.ban : cls === 'warn' ? IC.warn : cls === 'ok' ? IC.check : IC.clipboard;
     const meta = event.meta || {};
     const metaBits = [
       meta.country, meta.asn ? `AS${meta.asn}` : '', meta.org, meta.status,
@@ -2071,8 +2123,8 @@ function renderInvestigationEvents(events) {
       detailHtml = `<div class="inv-event-detail">${esc(event.detail)}</div>`;
     }
     if (meta.riskLevel && meta.riskScore !== undefined && !event.detail) {
-      const lvlIcon = meta.riskLevel === 'critical' ? '🔴' : meta.riskLevel === 'high' ? '🟠' : meta.riskLevel === 'warning' ? '🟡' : '🟢';
-      detailHtml = `<div class="inv-event-detail">${lvlIcon} ${esc(meta.riskLevel)} · ${meta.riskScore}/100${meta.previousScore !== undefined ? ` (было: ${meta.previousScore})` : ''}</div>`;
+      const lvlColor = meta.riskLevel === 'critical' ? 'var(--red)' : meta.riskLevel === 'high' ? '#f97316' : meta.riskLevel === 'warning' ? 'var(--yellow)' : 'var(--green)';
+      detailHtml = `<div class="inv-event-detail">${IC.dot(lvlColor)} ${esc(meta.riskLevel)} · ${meta.riskScore}/100${meta.previousScore !== undefined ? ` (было: ${meta.previousScore})` : ''}</div>`;
     }
 
     return `<div class="inv-event inv-event-${cls}">
@@ -2140,22 +2192,22 @@ function userCardHtml(u) {
 
       // Map signal IDs to human-readable names
       const signalTitles = {
-        hwid_over_limit: '🔴 HWID превышает лимит',
-        hwid_churn_high: '🔄 Высокая ротация HWID',
-        hwid_churn_moderate: '🔄 Повышенная ротация HWID',
-        temporal_247: '⏰ Активность 24/7',
-        multi_city_extreme: '🌍 Одновременно из 3+ городов',
-        multi_city_suspect: '🌍 Одновременно из 2 городов',
-        impossible_travel: '✈️ Невозможное перемещение',
-        suspicious_travel: '✈️ Подозрительное перемещение',
-        velocity_extreme: '⚡ Экстремальный трафик',
-        velocity_high: '⚡ Высокий трафик',
-        fingerprint_cluster: '🔗 Кластер HWID (мульти-акк)',
-        fingerprint_match: '🔗 Совпадение HWID',
-        shared_ip_cluster: '🌐 Общий IP кластер',
-        isp_datacenter_heavy: '🏢 Множество VPN/Proxy IP',
-        isp_mix: '🏢 Микс типов ISP',
-        behavior_shift: '📊 Резкая смена поведения',
+        hwid_over_limit: 'HWID превышает лимит',
+        hwid_churn_high: 'Высокая ротация HWID',
+        hwid_churn_moderate: 'Повышенная ротация HWID',
+        temporal_247: 'Активность 24/7',
+        multi_city_extreme: 'Одновременно из 3+ городов',
+        multi_city_suspect: 'Одновременно из 2 городов',
+        impossible_travel: 'Невозможное перемещение',
+        suspicious_travel: 'Подозрительное перемещение',
+        velocity_extreme: 'Экстремальный трафик',
+        velocity_high: 'Высокий трафик',
+        fingerprint_cluster: 'Кластер HWID (мульти-акк)',
+        fingerprint_match: 'Совпадение HWID',
+        shared_ip_cluster: 'Общий IP кластер',
+        isp_datacenter_heavy: 'Множество VPN/Proxy IP',
+        isp_mix: 'Микс типов ISP',
+        behavior_shift: 'Резкая смена поведения',
       };
 
       const titleText = signalTitles[s.id] || s.reason || s.id;
@@ -2196,7 +2248,7 @@ function userCardHtml(u) {
     const stableText = d.stable ? 'стабильный' : 'новый';
     const connType = geo.connectionType || '';
     const connBadge = connType
-      ? `<span class="conn-type conn-type-${connType.toLowerCase().includes('cell') ? 'cell' : connType.toLowerCase().includes('cable') || connType.toLowerCase().includes('dsl') ? 'cable' : connType.toLowerCase().includes('corp') ? 'corp' : 'other'}">${connType.toLowerCase().includes('cell') ? '📱' : connType.toLowerCase().includes('cable') || connType.toLowerCase().includes('dsl') ? '🔌' : connType.toLowerCase().includes('corp') ? '🏢' : '🌐'} ${esc(connType)}</span>`
+      ? `<span class="conn-type conn-type-${connType.toLowerCase().includes('cell') ? 'cell' : connType.toLowerCase().includes('cable') || connType.toLowerCase().includes('dsl') ? 'cable' : connType.toLowerCase().includes('corp') ? 'corp' : 'other'}">${esc(connType)}</span>`
       : '';
     return `<div class="ip-row">
       <code class="ip-row-addr">${esc(d.ip)}</code>
@@ -2222,19 +2274,6 @@ function userCardHtml(u) {
         </div>
       </div>
       <div class="uc-header-right">
-        <button class="btn-action ${isWL ? 'btn-wl-active' : 'btn-wl'}" onclick="toggleWhitelist('${escAttr(key)}', ${isWL})" title="${isWL ? 'Убрать из белого списка' : 'В белый список'}">
-          ${isWL ? '✅ WL ВКЛ' : '🛡️ WL'}
-        </button>
-        <button class="btn-action btn-warn" onclick="notifyUser('${escAttr(key)}')" title="Отправить предупреждение в Telegram">
-          ⚠️ Предупредить
-        </button>
-        <button class="btn-action ${isBanned ? 'btn-unban' : 'btn-ban'}" onclick="toggleBan('${escAttr(key)}', ${isBanned})" title="${isBanned ? 'Разбанить' : 'Заблокировать'}">
-          ${isBanned ? '✅ Разбан' : '🚫 Бан'}
-        </button>
-        <button id="btn-reset-uuid" class="btn-action btn-danger-outline" onclick="resetUserUuid('${escAttr(uuid)}')" title="Сменить UUID">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-          UUID
-        </button>
         <button class="modal-close" onclick="closeUserModal()" title="Закрыть">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -2244,87 +2283,62 @@ function userCardHtml(u) {
     ${bannerHtml}
 
     <div class="uc-body">
-      <div class="uc-metrics">
-        <div class="uc-metric ${hwidCount > hwidLimit ? 'uc-metric-danger' : ''}">
-          <div class="uc-metric-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
-          <div><div class="uc-metric-val">${hwidCount}<span class="uc-metric-dim">/${hwidLimit}</span></div><div class="uc-metric-lbl">Устройства</div></div>
-        </div>
-        <div class="uc-metric">
-          <div class="uc-metric-icon uc-metric-icon-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-          <div><div class="uc-metric-val">${freshIps.length}<span class="uc-metric-dim"> / ${freshStableIps.length} стаб.</span></div><div class="uc-metric-lbl">IP адреса</div></div>
-        </div>
-        <div class="uc-metric">
-          <div class="uc-metric-icon uc-metric-icon-yellow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
-          <div>
-            <div class="uc-metric-val">${riskScore}<span class="uc-metric-dim">/100</span></div>
-            <div class="uc-risk-bar"><div class="uc-risk-fill" style="width:${Math.min(100, riskScore)}%;background:${riskColor}"></div></div>
-          </div>
-        </div>
-        <div class="uc-metric">
-          <div class="uc-metric-icon uc-metric-icon-green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
-          <div><div class="uc-metric-val">${esc(traffic)}</div><div class="uc-metric-lbl">Трафик</div></div>
-        </div>
-      </div>
-
-      <div class="uc-info-row">
-        <div class="uc-info-item"><span>Подписка</span><b>${esc(subscription)}</b></div>
-        <div class="uc-info-item"><span>Активен до</span><b>${esc(expireDate)}</b></div>
-        <div class="uc-info-item"><span>HWID за 30д</span><b>${churn30d || '—'}</b></div>
-        <div class="uc-info-item"><span>Историч. IP</span><b>${historicalIps.length}</b></div>
-      </div>
-
-      ${signalsHtml}
-
-      ${freshIps.length > 0 ? `<div class="uc-section">
-        <div class="uc-section-head"><span>IP-адреса</span><span class="uc-badge">${freshIps.length}</span></div>
-        <div class="ip-rows">${ipRowsHtml}${moreIps}</div>
-      </div>` : ''}
-
-      ${devices.length > 0 ? `<div class="uc-section">
-        <div class="uc-section-head"><span>Устройства</span><span class="uc-badge">${devices.length}</span></div>
-        <div class="dev-rows">${devices.map(deviceDetailHtml).join('')}</div>
-      </div>` : ''}
-
-      <div class="uc-tabs-section">
+      <div class="uc-tabs-section" style="border:none;background:none">
         <div class="uc-tabs-nav">
-          <button class="uc-tab active" data-uctab="history" onclick="switchUcTab('history')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <button class="uc-tab active" data-uctab="overview" onclick="switchUcTab('overview')">
+            ${IC._s('<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>', 14)}
+            Обзор
+          </button>
+          <button class="uc-tab" data-uctab="signals" onclick="switchUcTab('signals')">
+            ${IC._s('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>', 14)}
+            Сигналы${serverResult && serverResult.signals && serverResult.signals.length ? ` <span class="uc-tab-count">${serverResult.signals.length}</span>` : ''}
+          </button>
+          <button class="uc-tab" data-uctab="history" onclick="switchUcTab('history')">
+            ${IC._s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>', 14)}
             История
           </button>
-          <button class="uc-tab" data-uctab="investigation" onclick="switchUcTab('investigation')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            Расследование
+          <button class="uc-tab" data-uctab="devices" onclick="switchUcTab('devices')">
+            ${IC._s('<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>', 14)}
+            Устройства <span class="uc-tab-count">${hwidCount}</span>
           </button>
-          <button class="uc-tab" data-uctab="notifications" onclick="switchUcTab('notifications')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-            Уведомления
-          </button>
-          <button class="uc-tab" data-uctab="overview" onclick="switchUcTab('overview')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            Профиль
+          <button class="uc-tab" data-uctab="actions" onclick="switchUcTab('actions')">
+            ${IC._s('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>', 14)}
+            Действия
           </button>
         </div>
 
-        <div class="uc-tab-panel active" data-uctab-panel="history">
-          <div id="user-history-content" class="history-content">
-            <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка истории…</p></div>
-          </div>
-        </div>
+        <!-- TAB: Обзор -->
+        <div class="uc-tab-panel active" data-uctab-panel="overview">
+          <div style="padding:18px;display:flex;flex-direction:column;gap:16px">
+            <div class="uc-metrics">
+              <div class="uc-metric ${hwidCount > hwidLimit ? 'uc-metric-danger' : ''}">
+                <div class="uc-metric-icon">${IC.hwid}</div>
+                <div><div class="uc-metric-val">${hwidCount}<span class="uc-metric-dim">/${hwidLimit}</span></div><div class="uc-metric-lbl">Устройства</div></div>
+              </div>
+              <div class="uc-metric">
+                <div class="uc-metric-icon uc-metric-icon-blue">${IC.globe}</div>
+                <div><div class="uc-metric-val">${freshIps.length}<span class="uc-metric-dim"> / ${freshStableIps.length} стаб.</span></div><div class="uc-metric-lbl">IP адреса</div></div>
+              </div>
+              <div class="uc-metric">
+                <div class="uc-metric-icon uc-metric-icon-yellow">${IC.shield}</div>
+                <div>
+                  <div class="uc-metric-val">${riskScore}<span class="uc-metric-dim">/100</span></div>
+                  <div class="uc-risk-bar"><div class="uc-risk-fill" style="width:${Math.min(100, riskScore)}%;background:${riskColor}"></div></div>
+                </div>
+              </div>
+              <div class="uc-metric">
+                <div class="uc-metric-icon uc-metric-icon-green">${IC.activity}</div>
+                <div><div class="uc-metric-val">${esc(traffic)}</div><div class="uc-metric-lbl">Трафик</div></div>
+              </div>
+            </div>
 
-        <div class="uc-tab-panel" data-uctab-panel="investigation">
-          <div id="user-investigation-content">
-            <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка…</p></div>
-          </div>
-        </div>
+            <div class="uc-info-row">
+              <div class="uc-info-item"><span>Подписка</span><b>${esc(subscription)}</b></div>
+              <div class="uc-info-item"><span>Активен до</span><b>${esc(expireDate)}</b></div>
+              <div class="uc-info-item"><span>HWID за 30д</span><b>${churn30d || '—'}</b></div>
+              <div class="uc-info-item"><span>Историч. IP</span><b>${historicalIps.length}</b></div>
+            </div>
 
-        <div class="uc-tab-panel" data-uctab-panel="notifications">
-          <div id="notification-history-content" class="notification-history">
-            <div class="loading-state" style="padding:16px"><div class="spinner-large"></div></div>
-          </div>
-        </div>
-
-        <div class="uc-tab-panel" data-uctab-panel="overview">
-          <div class="uc-overview-panel">
             <div class="uc-section" style="margin:0;border:none;border-radius:0">
               <div class="uc-section-head"><span>Трафик</span>${trafficLimit > 0 ? `<span class="uc-badge">${trafficPct}%</span>` : ''}</div>
               <div class="traffic-info">
@@ -2332,14 +2346,78 @@ function userCardHtml(u) {
                 <div class="traffic-text">${esc(fmtBytes(trafficBytes))}${trafficLimit > 0 ? ` / ${esc(fmtBytes(trafficLimit))}` : ''}</div>
               </div>
             </div>
-            ${rawFields.length > 0 ? `<div style="padding:16px">${userRawFieldsSection(rawFields)}</div>` : ''}
+
+            ${rawFields.length > 0 ? `<div>${userRawFieldsSection(rawFields)}</div>` : ''}
           </div>
         </div>
-      </div>
 
-      <div class="uc-section">
-        <div class="uc-section-head"><span>Заметка</span></div>
-        <textarea class="uc-note" placeholder="Добавить заметку…" onblur="saveNote('${escAttr(key)}', this.value)">${esc(noteText)}</textarea>
+        <!-- TAB: Сигналы -->
+        <div class="uc-tab-panel" data-uctab-panel="signals">
+          <div style="padding:18px;display:flex;flex-direction:column;gap:14px">
+            ${signalsHtml || '<div class="empty-state sm"><p>Сигналов детекции нет</p></div>'}
+          </div>
+        </div>
+
+        <!-- TAB: История -->
+        <div class="uc-tab-panel" data-uctab-panel="history">
+          <div id="user-history-content" class="history-content">
+            <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка истории…</p></div>
+          </div>
+          <div id="user-investigation-content">
+            <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка…</p></div>
+          </div>
+          <div id="notification-history-content" class="notification-history">
+            <div class="loading-state" style="padding:16px"><div class="spinner-large"></div></div>
+          </div>
+        </div>
+
+        <!-- TAB: Устройства -->
+        <div class="uc-tab-panel" data-uctab-panel="devices">
+          <div style="padding:18px;display:flex;flex-direction:column;gap:14px">
+            ${freshIps.length > 0 ? `<div class="uc-section" style="margin:0">
+              <div class="uc-section-head"><span>IP-адреса</span><span class="uc-badge">${freshIps.length}</span></div>
+              <div class="ip-rows">${ipRowsHtml}${moreIps}</div>
+            </div>` : ''}
+
+            ${devices.length > 0 ? `<div class="uc-section" style="margin:0">
+              <div class="uc-section-head"><span>Устройства</span><span class="uc-badge">${devices.length}</span></div>
+              <div class="dev-rows">${devices.map(deviceDetailHtml).join('')}</div>
+            </div>` : '<div class="empty-state sm"><p>Нет данных устройств</p></div>'}
+          </div>
+        </div>
+
+        <!-- TAB: Действия -->
+        <div class="uc-tab-panel" data-uctab-panel="actions">
+          <div style="padding:18px;display:flex;flex-direction:column;gap:16px">
+            <div class="uc-actions-grid">
+              <button class="uc-action-card ${isWL ? 'uc-action-active' : ''}" onclick="toggleWhitelist('${escAttr(key)}', ${isWL})">
+                <div class="uc-action-icon">${IC.shield}</div>
+                <div class="uc-action-label">${isWL ? 'Убрать из WL' : 'В белый список'}</div>
+                <div class="uc-action-desc">${isWL ? 'Пользователь в белом списке' : 'Исключить из детекции'}</div>
+              </button>
+              <button class="uc-action-card uc-action-warn" onclick="notifyUser('${escAttr(key)}')">
+                <div class="uc-action-icon">${IC.send}</div>
+                <div class="uc-action-label">Предупредить</div>
+                <div class="uc-action-desc">Отправить уведомление в Telegram</div>
+              </button>
+              <button class="uc-action-card ${isBanned ? 'uc-action-success' : 'uc-action-danger'}" onclick="toggleBan('${escAttr(key)}', ${isBanned})">
+                <div class="uc-action-icon">${isBanned ? IC.unban : IC.ban}</div>
+                <div class="uc-action-label">${isBanned ? 'Разбанить' : 'Заблокировать'}</div>
+                <div class="uc-action-desc">${isBanned ? 'Снять блокировку доступа' : 'Заблокировать доступ к VPN'}</div>
+              </button>
+              <button class="uc-action-card" onclick="resetUserUuid('${escAttr(uuid)}')">
+                <div class="uc-action-icon">${IC.churn}</div>
+                <div class="uc-action-label">Сменить UUID</div>
+                <div class="uc-action-desc">Генерация нового UUID подписки</div>
+              </button>
+            </div>
+
+            <div class="uc-section" style="margin:0">
+              <div class="uc-section-head"><span>Заметка</span></div>
+              <textarea class="uc-note" placeholder="Добавить заметку…" onblur="saveNote('${escAttr(key)}', this.value)">${esc(noteText)}</textarea>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>`
@@ -2961,8 +3039,107 @@ function renderSuspects() {
         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>
       </svg><p>Подозрительных пользователей не обнаружено</p></div>`;
   } else {
-    el.innerHTML = `<div class="sus-grid">${suspects.map(u => suspectCardHtml(u)).join('')}</div>`;
+    // Build pattern clusters from relations data
+    const clusters = buildSuspectClusters(suspects);
+    let html = '';
+
+    if (clusters.length > 0) {
+      html += `<div class="clusters-header">${IC.link} <span>Кластеры нарушений</span><span class="section-badge">${clusters.length}</span></div>`;
+      html += clusters.map(cl => clusterGroupHtml(cl)).join('');
+    }
+
+    // Unclustered suspects
+    const clusteredKeys = new Set(clusters.flatMap(c => c.members.map(m => getUserKey(m))));
+    const unclustered = suspects.filter(s => !clusteredKeys.has(getUserKey(s)));
+    if (unclustered.length > 0) {
+      if (clusters.length > 0) {
+        html += `<div class="clusters-header" style="margin-top:20px">${IC.users} <span>Остальные подозрительные</span><span class="section-badge">${unclustered.length}</span></div>`;
+      }
+      html += `<div class="sus-grid">${unclustered.map(u => suspectCardHtml(u)).join('')}</div>`;
+    }
+
+    el.innerHTML = html;
   }
+}
+
+// Build clusters: group suspects who share HWID/IP patterns
+function buildSuspectClusters(suspects) {
+  const graph = state.data && state.data.relations;
+  if (!graph) return [];
+
+  const suspectKeys = new Set(suspects.map(s => getUserKey(s)));
+  const clusters = [];
+
+  // HWID clusters (most important — same device)
+  for (const cl of (graph.hwidClusters || [])) {
+    const members = (cl.users || [])
+      .filter(u => {
+        const found = suspects.find(s => getUserAliases(s).includes(u.key));
+        return !!found;
+      })
+      .map(u => suspects.find(s => getUserAliases(s).includes(u.key)))
+      .filter(Boolean);
+
+    if (members.length >= 2) {
+      clusters.push({
+        type: 'hwid',
+        label: `Общее устройство: ${shortToken(cl.hwid || '')}`,
+        detail: cl.deviceInfo ? [cl.deviceInfo.os, cl.deviceInfo.model].filter(Boolean).join(' · ') : '',
+        severity: 'critical',
+        members,
+        raw: cl,
+      });
+    }
+  }
+
+  // IP clusters
+  for (const cl of (graph.ipClusters || [])) {
+    const members = (cl.users || [])
+      .filter(u => {
+        const found = suspects.find(s => getUserAliases(s).includes(u.key));
+        return !!found;
+      })
+      .map(u => suspects.find(s => getUserAliases(s).includes(u.key)))
+      .filter(Boolean);
+
+    if (members.length >= 2) {
+      // Skip if these members already appear together in an HWID cluster
+      const memberKeys = new Set(members.map(m => getUserKey(m)));
+      const alreadyClustered = clusters.some(c =>
+        c.type === 'hwid' && c.members.every(m => memberKeys.has(getUserKey(m)))
+      );
+      if (alreadyClustered) continue;
+
+      const geo = cl.geo || {};
+      clusters.push({
+        type: 'ip',
+        label: `Общий IP: ${cl.ip}`,
+        detail: [geo.countryCode, geo.org || geo.isp, geo.asn ? `AS${geo.asn}` : ''].filter(Boolean).join(' · '),
+        severity: 'high',
+        members,
+        raw: cl,
+      });
+    }
+  }
+
+  return clusters;
+}
+
+function clusterGroupHtml(cluster) {
+  const severityCls = cluster.severity === 'critical' ? 'cluster-group-critical' : 'cluster-group-high';
+  const typeIcon = cluster.type === 'hwid' ? IC.hwid : IC.globe;
+
+  return `<div class="cluster-group ${severityCls}">
+    <div class="cluster-group-header">
+      <div class="cluster-group-title">
+        <span class="cluster-group-icon">${typeIcon}</span>
+        <span>${esc(cluster.label)}</span>
+        <span class="cluster-group-count">${cluster.members.length} акк.</span>
+      </div>
+      ${cluster.detail ? `<div class="cluster-group-detail">${esc(cluster.detail)}</div>` : ''}
+    </div>
+    <div class="sus-grid">${cluster.members.map(u => suspectCardHtml(u)).join('')}</div>
+  </div>`;
 }
 
 function suspectCardHtml(u) {
@@ -3105,7 +3282,19 @@ function renderIncidents() {
     el.innerHTML = '<div class="empty-state"><p>Инцидентов в выбранном фильтре нет</p></div>';
     return;
   }
-  el.innerHTML = incidents.map(incidentCardHtml).join('');
+  el.innerHTML = `<div class="incident-table-wrap">
+    <table class="incident-table">
+      <thead><tr>
+        <th>Пользователь</th>
+        <th>Причина</th>
+        <th>Риск</th>
+        <th>Статус</th>
+        <th>Последнее</th>
+        <th>Действие</th>
+      </tr></thead>
+      <tbody>${incidents.map(incidentRowHtml).join('')}</tbody>
+    </table>
+  </div>`;
 }
 
 function incidentMatchesFilter(item) {
@@ -3116,49 +3305,49 @@ function incidentMatchesFilter(item) {
   return item.status === filter;
 }
 
-function incidentCardHtml(item) {
+function incidentRowHtml(item) {
   const user = findUserByAnyKey(item.userKey);
   const name = item.username || (user && (user.username || user.name)) || item.userKey;
   const risk = Number(item.riskScore || 0);
-  const riskCls = risk >= 80 ? 'danger' : risk >= 50 ? 'warn' : 'muted';
+  const riskCls = risk >= 80 ? 'risk-critical' : risk >= 60 ? 'risk-high' : risk >= 40 ? 'risk-warn' : 'risk-info';
   const status = item.status || 'new';
   const statusLabel = INCIDENT_STATUS_LABELS[status] || status;
   const lastSeen = item.lastSeen ? fmtDateTime(item.lastSeen) : '—';
   const reasonItems = incidentReasonItems(item.reason);
-  const riskLabel = incidentRiskLabel(risk);
   const comment = item.operatorComment || '';
+  const initials = name.substring(0, 2).toUpperCase();
 
-  return `<div class="incident-card incident-${escAttr(status)}">
-    <div class="incident-main">
-      <div class="incident-user">
-        <div class="sc-avatar ${risk >= 60 ? 'danger-avatar' : risk >= 30 ? 'warning-avatar' : ''}">${esc(name.substring(0, 2).toUpperCase())}</div>
+  return `<tr class="incident-row incident-row-${escAttr(status)}" data-userkey="${escAttr(item.userKey)}">
+    <td class="incident-td-user">
+      <div class="incident-user-cell">
+        <div class="sc-avatar ${risk >= 60 ? 'danger-avatar' : risk >= 30 ? 'warning-avatar' : ''}" style="width:30px;height:30px;font-size:11px;border-radius:8px">${esc(initials)}</div>
         <div>
-          <div class="incident-name">${esc(name)}</div>
-          <div class="incident-meta"><code>${esc(item.userKey)}</code><span>последнее: ${esc(lastSeen)}</span></div>
+          <div class="incident-cell-name" onclick="openUserCard('${escAttr(item.userKey)}')">${esc(name)}</div>
+          <code class="incident-cell-key">${esc(item.userKey.slice(0, 12))}…</code>
         </div>
       </div>
-      <div class="incident-badges">
-        <span class="incident-status incident-status-${escAttr(status)}">${esc(statusLabel)}</span>
-        <span class="incident-risk incident-risk-${riskCls}" title="Риск ${risk}/100">${risk}/100 · ${esc(riskLabel)}</span>
+    </td>
+    <td class="incident-td-reason">
+      <div class="incident-reason-chips">${reasonItems.map(r => `<span class="incident-reason-chip" title="${escAttr(r.detail)}">${esc(r.label)}</span>`).join('')}</div>
+    </td>
+    <td class="incident-td-risk">
+      <div class="incident-risk-cell ${riskCls}">
+        <span class="incident-risk-num">${risk}</span>
+        <div class="incident-risk-bar"><div class="incident-risk-fill" style="width:${Math.min(100, risk)}%"></div></div>
       </div>
-    </div>
-    <div class="incident-reason">
-      <div class="incident-reason-title">Почему создан</div>
-      <div class="incident-reason-list">
-        ${reasonItems.map(item => `<span class="incident-reason-chip" title="${escAttr(item.detail)}">${esc(item.label)}</span>`).join('')}
-      </div>
-    </div>
-    <div class="incident-controls">
-      <select onchange="updateIncidentStatus('${escAttr(item.userKey)}', this.value)">
+    </td>
+    <td><span class="incident-status incident-status-${escAttr(status)}">${esc(statusLabel)}</span></td>
+    <td class="incident-td-time">${esc(lastSeen)}</td>
+    <td class="incident-td-actions">
+      <select class="incident-select" onchange="updateIncidentStatus('${escAttr(item.userKey)}', this.value)">
         ${Object.entries(INCIDENT_STATUS_LABELS).map(([value, label]) =>
           `<option value="${value}" ${value === status ? 'selected' : ''}>${label}</option>`
         ).join('')}
       </select>
-      <button class="btn-sm" onclick="openUserCard('${escAttr(item.userKey)}')">Карточка</button>
-      <button class="btn-sm" onclick="loadAll()">Обновить</button>
-    </div>
-    <textarea class="incident-comment" placeholder="Что проверили, что решили, почему закрыто..." onblur="saveIncidentComment('${escAttr(item.userKey)}', this.value)">${esc(comment)}</textarea>
-  </div>`;
+      <button class="btn-sm" onclick="openUserCard('${escAttr(item.userKey)}')">${IC._s('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>', 14)}</button>
+    </td>
+  </tr>
+  ${comment ? `<tr class="incident-comment-row"><td colspan="6"><div class="incident-comment-preview">${esc(comment.slice(0, 80))}${comment.length > 80 ? '…' : ''}</div></td></tr>` : ''}`;
 }
 
 async function updateIncidentStatus(userKey, status) {
@@ -3270,7 +3459,7 @@ function relationCardHtml(item, type) {
     : '';
 
   const clusterWarn = type === 'hwid' && item.userCount >= 2
-    ? `<div class="cluster-warning">⚠ ${item.userCount} аккаунта — одно устройство</div>`
+    ? `<div class="cluster-warning">${IC._s('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>', 14)} ${item.userCount} аккаунта — одно устройство</div>`
     : '';
 
   return `<div class="relation-card relation-${type}${type === 'hwid' ? ' cluster-card' : ''}">
@@ -3548,13 +3737,13 @@ function renderRulesList(rules) {
         </div>
       </div>
       <div class="rule-card-bottom">
-        <span class="rule-stat">⚡ ${r.triggerCount} сраб.</span>
-        <span class="rule-stat">🕐 ${lastTrigger}</span>
-        <span class="rule-stat">⏱ ${r.cooldownHours}ч cooldown</span>
+        <span class="rule-stat">${IC._s('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>', 12)} ${r.triggerCount} сраб.</span>
+        <span class="rule-stat">${IC._s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>', 12)} ${lastTrigger}</span>
+        <span class="rule-stat">${IC._s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>', 12)} ${r.cooldownHours}ч cooldown</span>
         <div class="rule-card-btns">
-          <button class="btn-xs" onclick="testRule('${esc(r.id)}')">🧪 Тест</button>
-          <button class="btn-xs" onclick="openRuleEditor('${esc(r.id)}')">✏️</button>
-          <button class="btn-xs btn-danger-xs" onclick="deleteRule('${esc(r.id)}')">🗑</button>
+          <button class="btn-xs" onclick="testRule('${esc(r.id)}')">${IC._s('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/>', 12)} Тест</button>
+          <button class="btn-xs" onclick="openRuleEditor('${esc(r.id)}')">${IC._s('<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>', 12)}</button>
+          <button class="btn-xs btn-danger-xs" onclick="deleteRule('${esc(r.id)}')">${IC._s('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 12)}</button>
         </div>
       </div>
     </div>`;
