@@ -1711,6 +1711,13 @@ function renderSessions() {
     el.innerHTML = '<div class="empty-state"><p>Нет данных / пусто</p></div>';
     return;
   }
+
+  // Virtual pagination: show PAGE_SIZE at a time
+  const PAGE_SIZE = 50;
+  const visibleCount = Math.min(state._sessionsVisibleCount || PAGE_SIZE, users.length);
+  const visibleUsers = users.slice(0, visibleCount);
+  const hasMore = visibleCount < users.length;
+
   el.innerHTML = `<div class="incident-table-wrap">
     <table class="incident-table">
       <thead><tr>
@@ -1721,13 +1728,24 @@ function renderSessions() {
         <th>Риск</th>
         <th></th>
       </tr></thead>
-      <tbody>${users.map(u => sessionRowHtml(u)).join('')}</tbody>
+      <tbody>${visibleUsers.map(u => sessionRowHtml(u)).join('')}</tbody>
     </table>
-  </div>`;
+  </div>
+  ${hasMore ? `<div style="text-align:center;padding:16px">
+    <button class="btn-secondary" onclick="loadMoreSessions()" style="min-width:200px">
+      Показать ещё ${Math.min(PAGE_SIZE, users.length - visibleCount)} из ${users.length - visibleCount} оставшихся
+    </button>
+  </div>` : `<div style="text-align:center;padding:8px;color:var(--text3);font-size:12px">Всего: ${users.length}</div>`}`;
 }
 
 function filterByCountry(value) {
   state.countryFilter = value;
+  state._sessionsVisibleCount = 50; // Reset pagination on filter change
+  renderSessions();
+}
+
+function loadMoreSessions() {
+  state._sessionsVisibleCount = (state._sessionsVisibleCount || 50) + 50;
   renderSessions();
 }
 

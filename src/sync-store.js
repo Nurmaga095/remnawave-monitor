@@ -10,6 +10,10 @@ function createStore(options = {}) {
   const syncLogRetentionMs = Number(options.syncLogRetentionMs || 7 * 24 * 60 * 60 * 1000);
   const stateHistoryWindowMs = Number(options.stateHistoryWindowMs || 5 * 60 * 1000);
   const ipGeoCacheTtlMs = Number(options.ipGeoCacheTtlMs || 7 * 24 * 60 * 60 * 1000);
+  // Configurable retention
+  const hwidHistoryRetentionDays = Number(options.hwidHistoryRetentionDays || 30);
+  const auditLogRetentionDays = Number(options.auditLogRetentionDays || 14);
+  const activityHistoryRetentionDays = Number(options.activityHistoryRetentionDays || 7);
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -209,7 +213,17 @@ function createStore(options = {}) {
     );
     CREATE INDEX IF NOT EXISTS idx_sub_history_user ON sub_request_history(user_key);
     CREATE INDEX IF NOT EXISTS idx_sub_history_ts ON sub_request_history(request_at);
+
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      session_id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `);
+
+  // ─── DB Migrations ─────────────────────────────────────────────
+  runMigrations(db);
 
   const setMetaStmt = db.prepare(`
     INSERT INTO meta (key, value, updated_at)
@@ -232,7 +246,10 @@ function createStore(options = {}) {
     catch { return fallback; }
   }
 
+  let _cachedRelations = null;
+
   const saveSnapshotTx = db.transaction((snapshot) => {
+    _cachedRelations = null; // invalidate relation cache
     const ts = Number(snapshot.ts || Date.now());
     const users = Array.isArray(snapshot.users) ? snapshot.users : [];
     const activeIps = snapshot.activeIps || {};
@@ -277,12 +294,20 @@ function createStore(options = {}) {
     }
 
     const snapshotId = db.prepare('INSERT INTO ip_snapshots (ts) VALUES (?)').run(ts).lastInsertRowid;
-    const insertSnapshotIp = db.prepare('INSERT OR IGNORE INTO ip_snapshot_ips (snapshot_id, user_key, ip) VALUES (?, ?, ?)');
+    const geoByIpForSnapshot = getAllIpGeoCache();
+    const insertSnapshotIp = db.prepare('INSERT OR IGNORE INTO ip_snapshot_ips (snapshot_id, user_key, ip, country_code, asn, city) VALUES (?, ?, ?, ?, ?, ?)');
     for (const [key, ips] of Object.entries(activeIps)) {
       if (!key || !Array.isArray(ips)) continue;
       for (const entry of ips) {
         const ip = typeof entry === 'string' ? entry : entry && entry.ip;
-        if (ip) insertSnapshotIp.run(snapshotId, key, ip);
+        if (!ip) continue;
+        const geo = geoByIpForSnapshot[ip] || null;
+        insertSnapshotIp.run(
+          snapshotId, key, ip,
+          geo ? (geo.countryCode || geo.country || null) : null,
+          geo ? (geo.asn ? String(geo.asn) : null) : null,
+          geo ? (geo.city || null) : null,
+        );
       }
     }
 
@@ -393,14 +418,21 @@ function createStore(options = {}) {
     const syncCutoff = now - syncLogRetentionMs;
     db.prepare('DELETE FROM sync_runs WHERE started_at < ?').run(syncCutoff);
 
-    // Удаляем HWID-историю старше 30 дней
-    const hwidCutoff = now - 30 * 24 * 60 * 60 * 1000;
+    // Configurable HWID history retention
+    const hwidCutoff = now - hwidHistoryRetentionDays * 24 * 60 * 60 * 1000;
     db.prepare('DELETE FROM hwid_history WHERE last_seen < ?').run(hwidCutoff);
     db.prepare('DELETE FROM device_account_links WHERE last_seen < ?').run(hwidCutoff);
 
-    // Удаляем аудит-лог старше 14 дней
-    const auditCutoff = now - 14 * 24 * 60 * 60 * 1000;
+    // Configurable audit log retention
+    const auditCutoff = now - auditLogRetentionDays * 24 * 60 * 60 * 1000;
     db.prepare('DELETE FROM detection_audit_log WHERE ts < ?').run(auditCutoff);
+
+    // Configurable activity history retention
+    const activityCutoff = now - activityHistoryRetentionDays * 24 * 60 * 60 * 1000;
+    db.prepare('DELETE FROM activity_history WHERE ts < ?').run(activityCutoff);
+
+    // Clean expired sessions
+    db.prepare('DELETE FROM app_sessions WHERE expires_at < ?').run(now);
   }
 
   function getState() {
@@ -441,10 +473,14 @@ function createStore(options = {}) {
     const snapshots = db.prepare('SELECT id, ts FROM ip_snapshots WHERE ts >= ? ORDER BY ts ASC').all(cutoff);
     const ipHistory = snapshots.map((snapshot) => {
       const ips = {};
-      const rows = db.prepare('SELECT user_key, ip FROM ip_snapshot_ips WHERE snapshot_id = ? ORDER BY user_key, ip').all(snapshot.id);
+      const rows = db.prepare('SELECT user_key, ip, country_code, asn, city FROM ip_snapshot_ips WHERE snapshot_id = ? ORDER BY user_key, ip').all(snapshot.id);
       for (const row of rows) {
         if (!ips[row.user_key]) ips[row.user_key] = [];
         ips[row.user_key].push(row.ip);
+        // Backfill geo cache from snapshot data if missing
+        if (row.country_code && !geoByIp[row.ip]) {
+          geoByIp[row.ip] = { countryCode: row.country_code, asn: row.asn, city: row.city };
+        }
       }
       return { ts: snapshot.ts, ips };
     });
@@ -465,6 +501,11 @@ function createStore(options = {}) {
       ? trafficValues[Math.floor(trafficValues.length / 2)]
       : 0;
 
+    // Use cached relations if available (computed at saveSnapshot), fallback to compute
+    if (!_cachedRelations) {
+      _cachedRelations = buildRelationGraph(users, geoByIp, activeIpWindows['30']);
+    }
+
     return {
       users,
       activeIps,
@@ -484,7 +525,7 @@ function createStore(options = {}) {
       periodComparison: getPeriodComparison(),
       incidents: getIncidents(),
       incidentStats: getIncidentStats(),
-      relations: buildRelationGraph(users, geoByIp, activeIpWindows['30']),
+      relations: _cachedRelations,
       proxyData: ipChecker.getAllCached(),
       nodeMap: getMeta('node_map', {}),
       subHistory: getSubHistoryGrouped(),
@@ -1631,6 +1672,32 @@ function createStore(options = {}) {
     });
   }
 
+  // ── Session Persistence (SQLite) ──
+  function saveSession(sessionId, username, expiresAt) {
+    db.prepare(`
+      INSERT INTO app_sessions (session_id, username, expires_at, created_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        username = excluded.username,
+        expires_at = excluded.expires_at
+    `).run(sessionId, username, expiresAt, Date.now());
+  }
+
+  function getDbSession(sessionId) {
+    const row = db.prepare('SELECT * FROM app_sessions WHERE session_id = ? AND expires_at > ?').get(sessionId, Date.now());
+    return row || null;
+  }
+
+  function deleteDbSession(sessionId) {
+    db.prepare('DELETE FROM app_sessions WHERE session_id = ?').run(sessionId);
+  }
+
+  function loadAllSessions() {
+    const now = Date.now();
+    db.prepare('DELETE FROM app_sessions WHERE expires_at < ?').run(now);
+    return db.prepare('SELECT * FROM app_sessions WHERE expires_at > ?').all(now);
+  }
+
   // ── Health Data (for /health endpoint) ──
   function getHealthData() {
     try {
@@ -1861,6 +1928,11 @@ function createStore(options = {}) {
     saveSubHistory,
     getSubHistoryForUser,
     cleanupSubHistory,
+    // Session persistence
+    saveSession,
+    getDbSession,
+    deleteDbSession,
+    loadAllSessions,
     ipChecker,
     ruleEngine,
   };
@@ -1980,6 +2052,63 @@ function dedupeInvestigationEvents(events) {
     result.push(event);
   }
   return result;
+}
+
+// ─── DB Migrations ──────────────────────────────────────────────
+function runMigrations(db) {
+  // Ensure meta table has migration version
+  const currentVersion = (() => {
+    try {
+      const row = db.prepare("SELECT value FROM meta WHERE key = 'db_version'").get();
+      return row ? Number(JSON.parse(row.value)) : 0;
+    } catch { return 0; }
+  })();
+
+  const MIGRATIONS = [
+    {
+      version: 1,
+      description: 'Add geo columns to ip_snapshot_ips',
+      up: () => {
+        // Check if columns already exist
+        const cols = db.prepare("PRAGMA table_info(ip_snapshot_ips)").all().map(c => c.name);
+        if (!cols.includes('country_code')) {
+          db.exec(`ALTER TABLE ip_snapshot_ips ADD COLUMN country_code TEXT`);
+        }
+        if (!cols.includes('asn')) {
+          db.exec(`ALTER TABLE ip_snapshot_ips ADD COLUMN asn TEXT`);
+        }
+        if (!cols.includes('city')) {
+          db.exec(`ALTER TABLE ip_snapshot_ips ADD COLUMN city TEXT`);
+        }
+      },
+    },
+    {
+      version: 2,
+      description: 'Add index for app_sessions expiry',
+      up: () => {
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_app_sessions_expires ON app_sessions(expires_at)`);
+      },
+    },
+  ];
+
+  const pending = MIGRATIONS.filter(m => m.version > currentVersion);
+  if (pending.length === 0) return;
+
+  const runAll = db.transaction(() => {
+    for (const migration of pending) {
+      console.log(`[migration] v${migration.version}: ${migration.description}`);
+      migration.up();
+    }
+    const newVersion = pending[pending.length - 1].version;
+    db.prepare(`
+      INSERT INTO meta (key, value, updated_at)
+      VALUES ('db_version', ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `).run(JSON.stringify(newVersion), Date.now());
+  });
+
+  runAll();
+  console.log(`[migration] DB upgraded to v${pending[pending.length - 1].version}`);
 }
 
 module.exports = { createStore, userKey };

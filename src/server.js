@@ -32,6 +32,9 @@ const IP_GEO_CACHE_TTL_DAYS = Number(process.env.IP_GEO_CACHE_TTL_DAYS || 7);
 const IP_GEO_SYNC_LIMIT = Number(process.env.IP_GEO_SYNC_LIMIT || 200);
 const IP_GEO_CONCURRENCY = Number(process.env.IP_GEO_CONCURRENCY || 4);
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const HWID_HISTORY_RETENTION_DAYS = Number(process.env.HWID_HISTORY_RETENTION_DAYS || 30);
+const AUDIT_LOG_RETENTION_DAYS = Number(process.env.AUDIT_LOG_RETENTION_DAYS || 14);
+const ACTIVITY_HISTORY_RETENTION_DAYS = Number(process.env.ACTIVITY_HISTORY_RETENTION_DAYS || 7);
 
 const PUBLIC_DIR = path.join(PROJECT_ROOT, 'public');
 const PUBLIC_FILES = new Set(['index.html', 'css/style.css', 'js/app.js', 'favicon.ico', 'favicon.svg']);
@@ -111,7 +114,24 @@ const store = createStore({
   syncLogRetentionMs: SYNC_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000,
   stateHistoryWindowMs: IP_STABILITY_WINDOW_MINUTES * 60 * 1000,
   ipGeoCacheTtlMs: IP_GEO_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000,
+  hwidHistoryRetentionDays: HWID_HISTORY_RETENTION_DAYS,
+  auditLogRetentionDays: AUDIT_LOG_RETENTION_DAYS,
+  activityHistoryRetentionDays: ACTIVITY_HISTORY_RETENTION_DAYS,
 });
+
+// Restore persisted sessions from DB
+try {
+  const restored = store.loadAllSessions();
+  for (const row of restored) {
+    sessions.set(row.session_id, {
+      username: row.username,
+      expiresAt: row.expires_at,
+    });
+  }
+  if (restored.length > 0) console.log(`[session] restored ${restored.length} session(s) from DB`);
+} catch (e) {
+  console.error('[session] restore error:', e.message);
+}
 
 const dataSync = createRemnawaveSync({
   store,
@@ -345,7 +365,7 @@ function handleHealth(req, res) {
   const dbStats = store.getHealthData ? store.getHealthData() : {};
   sendJson(res, 200, {
     status: 'ok',
-    version: '2.0.0',
+    version: '2.1.0',
     uptime: Math.round(uptime),
     uptimeHuman: uptime >= 3600 ? `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m` : `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`,
     sync: {
@@ -408,10 +428,14 @@ async function handleLogin(req, res) {
   }
 
   const sessionId = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = Date.now() + SESSION_MAX_AGE_SECONDS * 1000;
   sessions.set(sessionId, {
     username: APP_USERNAME,
-    expiresAt: Date.now() + SESSION_MAX_AGE_SECONDS * 1000,
+    expiresAt,
   });
+
+  // Persist session to DB
+  try { store.saveSession(sessionId, APP_USERNAME, expiresAt); } catch { /* ignore */ }
 
   res.setHeader('Set-Cookie', buildSessionCookie(req, sessionId));
   sendJson(res, 200, {
@@ -431,7 +455,10 @@ async function handleLogout(req, res) {
   }
 
   const session = getSession(req);
-  if (session) sessions.delete(session.id);
+  if (session) {
+    sessions.delete(session.id);
+    try { store.deleteDbSession(session.id); } catch { /* ignore */ }
+  }
   res.setHeader('Set-Cookie', clearSessionCookie(req));
   sendJson(res, 200, { authenticated: false });
 }
