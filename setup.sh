@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Remnawave Monitor — Interactive Setup Script
-# Automatically installs dependencies, configures .env, and optionally sets up
-# systemd service + Caddy reverse proxy.
+# Remnawave Monitor — интерактивный установщик
+# Автоматически устанавливает зависимости, настраивает .env и при необходимости
+# добавляет systemd-сервис и обратный прокси через Caddy.
 #
-# Usage:
+# Использование:
 #   chmod +x setup.sh
 #   sudo ./setup.sh
 #
@@ -24,8 +24,8 @@ banner() {
   echo ""
   echo -e "${CYAN}${BOLD}"
   echo "  ┌─────────────────────────────────────────────┐"
-  echo "  │         Remnawave Monitor Setup              │"
-  echo "  │         v1.0.0 • Interactive Installer       │"
+  echo "  │       Установка Remnawave Monitor            │"
+  echo "  │       v1.0.0 • интерактивный режим           │"
   echo "  └─────────────────────────────────────────────┘"
   echo -e "${NC}"
 }
@@ -63,13 +63,13 @@ ask_secret() {
 ask_yn() {
   local prompt="$1"
   local default="${2:-y}"
-  local hint="Y/n"
-  [ "$default" = "n" ] && hint="y/N"
+  local hint="Д/н"
+  [ "$default" = "n" ] && hint="д/Н"
   echo -ne "  ${GREEN}?${NC}  ${prompt} ${DIM}(${hint})${NC}: " >&2
   local result=""
   read -r result
   result="${result:-$default}"
-  [[ "$result" =~ ^[Yy] ]]
+  [[ "$result" =~ ^[YyДд] ]]
 }
 
 generate_secret() {
@@ -91,8 +91,8 @@ banner
 
 # Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
-  error "This script must be run as root (use sudo)"
-  echo -e "  Run: ${BOLD}sudo ./setup.sh${NC}"
+  error "Скрипт нужно запускать от root (через sudo)"
+  echo -e "  Запустите: ${BOLD}sudo ./setup.sh${NC}"
   exit 1
 fi
 
@@ -101,80 +101,80 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR=""
 
 echo ""
-info "Detected script location: ${BOLD}${SCRIPT_DIR}${NC}"
+info "Расположение скрипта: ${BOLD}${SCRIPT_DIR}${NC}"
 
-if ask_yn "Install in /opt/remnawave-monitor?" "y"; then
+if ask_yn "Установить в /opt/remnawave-monitor?" "y"; then
   INSTALL_DIR="/opt/remnawave-monitor"
   if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
-    info "Copying files to ${INSTALL_DIR}..."
+    info "Копирую файлы в ${INSTALL_DIR}..."
     mkdir -p "$INSTALL_DIR"
     cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/" 2>/dev/null || true
     cp "$SCRIPT_DIR"/.env.example "$INSTALL_DIR/" 2>/dev/null || true
     cp "$SCRIPT_DIR"/.gitignore "$INSTALL_DIR/" 2>/dev/null || true
-    success "Files copied"
+    success "Файлы скопированы"
   fi
 else
   INSTALL_DIR="$SCRIPT_DIR"
 fi
 
-info "Installation directory: ${BOLD}${INSTALL_DIR}${NC}"
+info "Каталог установки: ${BOLD}${INSTALL_DIR}${NC}"
 
 # ─── Step 1: Check prerequisites ─────────────────────────────────────────────
-step 1 "Checking prerequisites"
+step 1 "Проверка зависимостей"
 
 # Check Node.js
 if command -v node &>/dev/null; then
   NODE_VERSION=$(node --version)
   NODE_MAJOR=$(echo "$NODE_VERSION" | sed 's/v//' | cut -d. -f1)
   if [ "$NODE_MAJOR" -ge 18 ]; then
-    success "Node.js ${NODE_VERSION} found"
+    success "Node.js ${NODE_VERSION} найден"
   else
-    warn "Node.js ${NODE_VERSION} found, but >= 18 is required"
-    if ask_yn "Install Node.js 20 via NodeSource?" "y"; then
+    warn "Найден Node.js ${NODE_VERSION}, но требуется версия >= 18"
+    if ask_yn "Установить Node.js 20 через NodeSource?" "y"; then
       curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
       apt-get install -y nodejs
-      success "Node.js $(node --version) installed"
+      success "Node.js $(node --version) установлен"
     else
-      error "Node.js >= 18 is required. Aborting."
+      error "Требуется Node.js >= 18. Установка остановлена."
       exit 1
     fi
   fi
 else
-  warn "Node.js not found"
-  if ask_yn "Install Node.js 20 via NodeSource?" "y"; then
+  warn "Node.js не найден"
+  if ask_yn "Установить Node.js 20 через NodeSource?" "y"; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
-    success "Node.js $(node --version) installed"
+    success "Node.js $(node --version) установлен"
   else
-    error "Node.js is required. Aborting."
+    error "Node.js обязателен для работы. Установка остановлена."
     exit 1
   fi
 fi
 
 # Check build tools (needed for better-sqlite3)
 if ! command -v make &>/dev/null || ! command -v g++ &>/dev/null; then
-  warn "Build tools not found (needed for better-sqlite3)"
-  if ask_yn "Install build-essential, python3, make, g++?" "y"; then
+  warn "Инструменты сборки не найдены (нужны для better-sqlite3)"
+  if ask_yn "Установить build-essential, python3, make, g++?" "y"; then
     apt-get update -qq
     apt-get install -y build-essential python3 make g++
-    success "Build tools installed"
+    success "Инструменты сборки установлены"
   fi
 else
-  success "Build tools available"
+  success "Инструменты сборки найдены"
 fi
 
 # ─── Step 2: Configure .env ──────────────────────────────────────────────────
-step 2 "Configuring environment"
+step 2 "Настройка окружения"
 
 ENV_FILE="${INSTALL_DIR}/.env"
 
 if [ -f "$ENV_FILE" ]; then
-  warn ".env already exists at ${ENV_FILE}"
-  if ask_yn "Overwrite existing .env?" "n"; then
+  warn ".env уже существует: ${ENV_FILE}"
+  if ask_yn "Перезаписать существующий .env?" "n"; then
     CONFIGURE_ENV=true
   else
     CONFIGURE_ENV=false
-    success "Keeping existing .env"
+    success "Оставляю существующий .env"
   fi
 else
   CONFIGURE_ENV=true
@@ -182,43 +182,43 @@ fi
 
 if [ "$CONFIGURE_ENV" = true ]; then
   echo ""
-  echo -e "  ${DIM}─── Dashboard Credentials ───${NC}"
-  APP_USERNAME=$(ask "Dashboard username" "admin")
-  APP_PASSWORD=$(ask_secret "Dashboard password")
+  echo -e "  ${DIM}─── Доступ к панели ───${NC}"
+  APP_USERNAME=$(ask "Имя пользователя панели" "admin")
+  APP_PASSWORD=$(ask_secret "Пароль панели")
   while [ -z "$APP_PASSWORD" ]; do
-    warn "Password cannot be empty"
-    APP_PASSWORD=$(ask_secret "Dashboard password")
+    warn "Пароль не может быть пустым"
+    APP_PASSWORD=$(ask_secret "Пароль панели")
   done
 
   echo ""
-  echo -e "  ${DIM}─── Remnawave Connection ───${NC}"
-  REMNAWAVE_BASE_URL=$(ask "Remnawave panel URL (e.g. https://panel.example.com)")
+  echo -e "  ${DIM}─── Подключение к Remnawave ───${NC}"
+  REMNAWAVE_BASE_URL=$(ask "URL панели Remnawave (например https://panel.example.com)")
   while [ -z "$REMNAWAVE_BASE_URL" ]; do
-    warn "Panel URL is required"
-    REMNAWAVE_BASE_URL=$(ask "Remnawave panel URL")
+    warn "URL панели обязателен"
+    REMNAWAVE_BASE_URL=$(ask "URL панели Remnawave")
   done
   # Remove trailing slash
   REMNAWAVE_BASE_URL="${REMNAWAVE_BASE_URL%/}"
 
-  REMNAWAVE_API_TOKEN=$(ask_secret "Remnawave API token")
+  REMNAWAVE_API_TOKEN=$(ask_secret "API-токен Remnawave")
   while [ -z "$REMNAWAVE_API_TOKEN" ]; do
-    warn "API token is required"
-    REMNAWAVE_API_TOKEN=$(ask_secret "Remnawave API token")
+    warn "API-токен обязателен"
+    REMNAWAVE_API_TOKEN=$(ask_secret "API-токен Remnawave")
   done
 
   echo ""
-  echo -e "  ${DIM}─── Optional Settings ───${NC}"
-  PORT=$(ask "HTTP port" "8787")
-  SYNC_INTERVAL=$(ask "Sync interval (seconds)" "60")
+  echo -e "  ${DIM}─── Дополнительные настройки ───${NC}"
+  PORT=$(ask "HTTP-порт" "8787")
+  SYNC_INTERVAL=$(ask "Интервал синхронизации (секунды)" "60")
 
   TELEGRAM_BOT_TOKEN=""
-  if ask_yn "Configure Telegram bot for user warnings?" "n"; then
-    TELEGRAM_BOT_TOKEN=$(ask_secret "Telegram Bot Token")
+  if ask_yn "Настроить Telegram-бота для предупреждений пользователям?" "n"; then
+    TELEGRAM_BOT_TOKEN=$(ask_secret "Токен Telegram-бота")
   fi
 
   # Generate session secret automatically
   SESSION_SECRET=$(generate_secret)
-  info "Session secret generated automatically (48 chars)"
+  info "SESSION_SECRET сгенерирован автоматически (48 символов)"
 
   # Write .env
   cat > "$ENV_FILE" << ENVEOF
@@ -249,51 +249,51 @@ TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 ENVEOF
 
   chmod 600 "$ENV_FILE"
-  success ".env created and secured (chmod 600)"
+  success ".env создан и защищен (chmod 600)"
 fi
 
 # ─── Step 3: Install npm dependencies ────────────────────────────────────────
-step 3 "Installing dependencies"
+step 3 "Установка зависимостей"
 
 cd "$INSTALL_DIR"
 if [ -d "node_modules" ] && [ -f "node_modules/.package-lock.json" ]; then
-  info "node_modules exists"
-  if ask_yn "Reinstall dependencies?" "n"; then
+  info "node_modules уже существует"
+  if ask_yn "Переустановить зависимости?" "n"; then
     rm -rf node_modules
     npm install --omit=dev
-    success "Dependencies reinstalled"
+    success "Зависимости переустановлены"
   else
-    success "Using existing node_modules"
+    success "Использую существующий node_modules"
   fi
 else
   npm install --omit=dev
-  success "Dependencies installed"
+  success "Зависимости установлены"
 fi
 
 # Verify syntax
-info "Verifying source files..."
+info "Проверяю исходные файлы..."
 if node --check src/server.js && \
    node --check src/remnawave-sync.js && \
    node --check src/sync-store.js && \
    node --check src/detect.js && \
    node --check src/rules.js && \
    node --check src/ip-check.js; then
-  success "All source files are valid"
+  success "Синтаксис исходных файлов корректен"
 else
-  error "Syntax check failed!"
+  error "Проверка синтаксиса не пройдена!"
   exit 1
 fi
 
 # ─── Step 4: Create system user ──────────────────────────────────────────────
-step 4 "Setting up system user"
+step 4 "Настройка системного пользователя"
 
 SERVICE_USER="remnawave"
 
 if id "$SERVICE_USER" &>/dev/null; then
-  success "User '${SERVICE_USER}' already exists"
+  success "Пользователь '${SERVICE_USER}' уже существует"
 else
   useradd --system --home "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
-  success "System user '${SERVICE_USER}' created"
+  success "Системный пользователь '${SERVICE_USER}' создан"
 fi
 
 # Create data directory
@@ -301,18 +301,18 @@ mkdir -p "${INSTALL_DIR}/data"
 
 # Set ownership
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "$INSTALL_DIR"
-success "Ownership set to ${SERVICE_USER}:${SERVICE_USER}"
+success "Права владельца установлены: ${SERVICE_USER}:${SERVICE_USER}"
 
 # ─── Step 5: Set up systemd service ──────────────────────────────────────────
-step 5 "Configuring systemd service"
+step 5 "Настройка systemd-сервиса"
 
 SYSTEMD_FILE="/etc/systemd/system/remnawave-monitor.service"
 
 if [ -f "$SYSTEMD_FILE" ]; then
-  warn "systemd service already exists"
-  SETUP_SERVICE=$(ask_yn "Overwrite systemd service?" "n" && echo true || echo false)
+  warn "systemd-сервис уже существует"
+  SETUP_SERVICE=$(ask_yn "Перезаписать systemd-сервис?" "n" && echo true || echo false)
 else
-  SETUP_SERVICE=$(ask_yn "Install systemd service (auto-start on boot)?" "y" && echo true || echo false)
+  SETUP_SERVICE=$(ask_yn "Установить systemd-сервис (автозапуск при старте)?" "y" && echo true || echo false)
 fi
 
 if [ "$SETUP_SERVICE" = "true" ]; then
@@ -343,50 +343,50 @@ SVCEOF
 
   systemctl daemon-reload
   systemctl enable remnawave-monitor
-  success "systemd service installed and enabled"
+  success "systemd-сервис установлен и включен"
 
-  if ask_yn "Start Remnawave Monitor now?" "y"; then
+  if ask_yn "Запустить Remnawave Monitor сейчас?" "y"; then
     systemctl start remnawave-monitor
     sleep 2
     if systemctl is-active --quiet remnawave-monitor; then
-      success "Remnawave Monitor is running!"
+      success "Remnawave Monitor запущен!"
     else
-      error "Service failed to start. Check logs:"
+      error "Сервис не запустился. Проверьте логи:"
       echo -e "  ${DIM}journalctl -u remnawave-monitor -n 20 --no-pager${NC}"
     fi
   fi
 fi
 
 # ─── Step 6: Caddy reverse proxy ─────────────────────────────────────────────
-step 6 "Reverse proxy (Caddy)"
+step 6 "Обратный прокси (Caddy)"
 
 SETUP_CADDY=false
 if command -v caddy &>/dev/null; then
-  success "Caddy is installed"
-  if ask_yn "Configure Caddy reverse proxy for HTTPS?" "y"; then
+  success "Caddy установлен"
+  if ask_yn "Настроить обратный прокси Caddy для HTTPS?" "y"; then
     SETUP_CADDY=true
   fi
 else
-  info "Caddy is not installed"
-  if ask_yn "Install and configure Caddy?" "n"; then
+  info "Caddy не установлен"
+  if ask_yn "Установить и настроить Caddy?" "n"; then
     apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
     apt-get update -qq
     apt-get install -y caddy
-    success "Caddy installed"
+    success "Caddy установлен"
     SETUP_CADDY=true
   fi
 fi
 
 if [ "$SETUP_CADDY" = true ]; then
-  DOMAIN=$(ask "Your domain (e.g. monitor.example.com)")
+  DOMAIN=$(ask "Ваш домен (например monitor.example.com)")
   if [ -n "$DOMAIN" ]; then
     CADDY_FILE="/etc/caddy/Caddyfile"
     # Backup existing Caddyfile
     if [ -f "$CADDY_FILE" ]; then
       cp "$CADDY_FILE" "${CADDY_FILE}.bak.$(date +%s)"
-      info "Existing Caddyfile backed up"
+      info "Существующий Caddyfile сохранен в резервную копию"
     fi
 
     LISTEN_PORT="${PORT:-8787}"
@@ -405,8 +405,8 @@ ${DOMAIN} {
 CADDYEOF
 
     systemctl reload caddy 2>/dev/null || systemctl restart caddy
-    success "Caddy configured for ${DOMAIN}"
-    info "HTTPS certificate will be obtained automatically"
+    success "Caddy настроен для ${DOMAIN}"
+    info "HTTPS-сертификат будет получен автоматически"
   fi
 fi
 
@@ -414,24 +414,24 @@ fi
 echo ""
 echo -e "${GREEN}${BOLD}"
 echo "  ┌─────────────────────────────────────────────┐"
-echo "  │       ✔  Installation Complete!              │"
+echo "  │       ✔  Установка завершена!                │"
 echo "  └─────────────────────────────────────────────┘"
 echo -e "${NC}"
 
-echo -e "  ${BOLD}Installation path:${NC}  ${INSTALL_DIR}"
-echo -e "  ${BOLD}Configuration:${NC}      ${INSTALL_DIR}/.env"
-echo -e "  ${BOLD}Database:${NC}            ${INSTALL_DIR}/data/remnawave-monitor.sqlite"
-echo -e "  ${BOLD}Local URL:${NC}           http://127.0.0.1:${PORT:-8787}"
+echo -e "  ${BOLD}Каталог установки:${NC}  ${INSTALL_DIR}"
+echo -e "  ${BOLD}Конфигурация:${NC}       ${INSTALL_DIR}/.env"
+echo -e "  ${BOLD}База данных:${NC}        ${INSTALL_DIR}/data/remnawave-monitor.sqlite"
+echo -e "  ${BOLD}Локальный URL:${NC}      http://127.0.0.1:${PORT:-8787}"
 if [ -n "${DOMAIN:-}" ]; then
-  echo -e "  ${BOLD}Public URL:${NC}          https://${DOMAIN}"
+  echo -e "  ${BOLD}Публичный URL:${NC}      https://${DOMAIN}"
 fi
 
 echo ""
-echo -e "  ${DIM}Useful commands:${NC}"
-echo -e "    ${CYAN}systemctl status remnawave-monitor${NC}   — check status"
-echo -e "    ${CYAN}systemctl restart remnawave-monitor${NC}  — restart"
-echo -e "    ${CYAN}journalctl -u remnawave-monitor -f${NC}   — live logs"
+echo -e "  ${DIM}Полезные команды:${NC}"
+echo -e "    ${CYAN}systemctl status remnawave-monitor${NC}   — проверить статус"
+echo -e "    ${CYAN}systemctl restart remnawave-monitor${NC}  — перезапустить"
+echo -e "    ${CYAN}journalctl -u remnawave-monitor -f${NC}   — смотреть логи"
 echo ""
-echo -e "  ${DIM}The database will be created automatically on first run.${NC}"
-echo -e "  ${DIM}Data will start appearing after the first sync cycle (~60s).${NC}"
+echo -e "  ${DIM}База данных будет создана автоматически при первом запуске.${NC}"
+echo -e "  ${DIM}Данные появятся после первого цикла синхронизации (~60 секунд).${NC}"
 echo ""
