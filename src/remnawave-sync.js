@@ -19,6 +19,7 @@ function createRemnawaveSync(options) {
 
   let timer = null;
   let runningPromise = null;
+  let currentRetryDelay = intervalMs;
   const syncCallbacks = [];
 
   function start() {
@@ -53,16 +54,27 @@ function createRemnawaveSync(options) {
       timer = null;
     }
 
+    let wasError = false;
     runningPromise = performSync(reason)
       .then(() => {
+        currentRetryDelay = intervalMs; // Reset on success
         for (const cb of syncCallbacks) { try { cb(); } catch (e) { console.error('[sync] callback error:', e.message); } }
       })
       .catch((e) => {
+        wasError = true;
         console.error('[sync] failed:', e.message);
       })
       .finally(() => {
         runningPromise = null;
-        schedule(intervalMs);
+        // Exponential backoff with jitter on error
+        if (wasError) {
+          currentRetryDelay = Math.min(currentRetryDelay * 2, 300000); // max 5 min
+          const jitter = Math.round(Math.random() * 5000);
+          console.log(`[sync] retrying in ${Math.round(currentRetryDelay / 1000)}s (backoff)`);
+          schedule(currentRetryDelay + jitter);
+        } else {
+          schedule(intervalMs);
+        }
       });
 
     return runningPromise;

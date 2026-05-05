@@ -1631,6 +1631,54 @@ function createStore(options = {}) {
     });
   }
 
+  // ── Health Data (for /health endpoint) ──
+  function getHealthData() {
+    try {
+      const tables = {};
+      const countStmts = {
+        users: 'SELECT COUNT(*) as cnt FROM users',
+        active_ips: 'SELECT COUNT(*) as cnt FROM active_ips',
+        incidents: 'SELECT COUNT(*) as cnt FROM incidents',
+        ip_snapshots: 'SELECT COUNT(*) as cnt FROM ip_snapshots',
+        ip_geo_cache: 'SELECT COUNT(*) as cnt FROM ip_geo_cache',
+        hwid_history: 'SELECT COUNT(*) as cnt FROM hwid_history',
+        detection_audit_log: 'SELECT COUNT(*) as cnt FROM detection_audit_log',
+        audit_log: 'SELECT COUNT(*) as cnt FROM audit_log',
+      };
+      for (const [name, sql] of Object.entries(countStmts)) {
+        const row = db.prepare(sql).get();
+        tables[name] = row ? row.cnt : 0;
+      }
+
+      // DB file size
+      let dbSizeMB = 0;
+      try {
+        const stat = fs.statSync(dbPath);
+        dbSizeMB = Math.round(stat.size / 1024 / 1024 * 10) / 10;
+      } catch { /* ignore */ }
+
+      // Average sync duration (last 10)
+      const syncRows = db.prepare(`
+        SELECT finished_at - started_at as duration_ms
+        FROM sync_runs
+        WHERE status = 'ok' AND finished_at IS NOT NULL
+        ORDER BY started_at DESC LIMIT 10
+      `).all();
+      const avgSyncMs = syncRows.length > 0
+        ? Math.round(syncRows.reduce((s, r) => s + (r.duration_ms || 0), 0) / syncRows.length)
+        : 0;
+
+      return {
+        dbSizeMB,
+        tables,
+        avgSyncDurationMs: avgSyncMs,
+        lastSyncRuns: syncRows.length,
+      };
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+
   // VPN/Proxy detection
   const ipChecker = createIpChecker(db);
 
@@ -1809,6 +1857,7 @@ function createStore(options = {}) {
     getAuditLog,
     getExportData,
     createBackup,
+    getHealthData,
     saveSubHistory,
     getSubHistoryForUser,
     cleanupSubHistory,

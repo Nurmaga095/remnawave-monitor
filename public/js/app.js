@@ -124,7 +124,10 @@ let state = {
   countdown: 0,
   countdownTimer: null,
   loading: false,
-  sync: null
+  sync: null,
+  stateVersion: 0,
+  lastStateETag: null,
+  bulkSelected: new Set(),
 };
 
 // ─── Диагностика API ──────────────────────────────────────────────
@@ -218,6 +221,8 @@ async function init() {
       showApp();
       connectSSE();
       loadAll();
+      initHotkeys();
+      initWebNotifications();
     } else {
       showSetup(session);
     }
@@ -431,6 +436,13 @@ async function loadAll() {
 
   try {
     const snapshot = await fetchCachedState();
+    if (snapshot === null) {
+      // 304 Not Modified — no changes, just reschedule
+      debugLog('[loadAll] state not modified (304), skipping render');
+      setStatus('ok');
+      scheduleRefresh();
+      return;
+    }
     applyCachedState(snapshot);
     setStatus(state.sync && state.sync.isSyncing ? 'loading' : (state.sync && state.sync.status === 'error' ? 'error' : 'ok'));
     renderAll();
@@ -451,11 +463,22 @@ async function loadAll() {
 }
 
 async function fetchCachedState() {
-  const res = await fetch('/api/state', { credentials: 'same-origin' });
+  const headers = { credentials: 'same-origin' };
+  const opts = { credentials: 'same-origin' };
+  if (state.lastStateETag) {
+    opts.headers = { 'If-None-Match': state.lastStateETag };
+  }
+  const res = await fetch('/api/state', opts);
   if (res.status === 401) {
     await handleAuthExpired();
     throw new Error('Сессия истекла, войди снова');
   }
+  // 304 Not Modified — data hasn't changed
+  if (res.status === 304) {
+    return null;
+  }
+  const etag = res.headers.get('ETag');
+  if (etag) state.lastStateETag = etag;
   const data = await readJsonSafe(res);
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
@@ -1526,6 +1549,14 @@ function renderDashboard() {
   setVal('active-sessions', onlineCount);
   setVal('total-hwid', totalHwid);
   setVal('suspects-count', suspects.length);
+
+  // Sparklines in stat cards
+  if (state.data && state.data.activityHistory && state.data.activityHistory.length >= 3) {
+    const hist = state.data.activityHistory.slice(-24);
+    renderSparkline('stat-total-users', hist.map(h => h.onlineUsers || 0), '#818cf8');
+    renderSparkline('stat-active-sessions', hist.map(h => h.onlineUsers || 0), '#34d399');
+    renderSparkline('stat-suspects', hist.map(h => h.suspects || 0), '#f87171');
+  }
 
   // Delta badges
   if (comparison) {
@@ -4562,10 +4593,21 @@ function connectSSE() {
     _sseSource = new EventSource('/api/events');
 
     _sseSource.addEventListener('sync_complete', (e) => {
-      // Server finished a sync cycle — reload data immediately
-      if (!state.loading) {
-        console.log('[sse] sync_complete received, reloading data');
-        loadAll();
+      // Server finished a sync cycle — check if stateVersion changed
+      try {
+        const data = JSON.parse(e.data);
+        if (data.stateVersion && data.stateVersion !== state.stateVersion) {
+          state.stateVersion = data.stateVersion;
+          if (!state.loading) {
+            console.log(`[sse] sync_complete v${data.stateVersion}, reloading data`);
+            loadAll();
+          }
+        } else if (!data.stateVersion && !state.loading) {
+          // Fallback: no version, always reload
+          loadAll();
+        }
+      } catch {
+        if (!state.loading) loadAll();
       }
     });
 
@@ -5061,4 +5103,261 @@ function exportData(type, format) {
   a.click();
   document.body.removeChild(a);
   toast(`Экспорт ${type} (${format.toUpperCase()}) начат`, 'ok');
+}
+
+// ─── Sparkline Renderer ──────────────────────────────────────────
+function renderSparkline(containerId, values, color = '#818cf8') {
+  const container = document.getElementById(containerId);
+  if (!container || values.length < 2) return;
+
+  let svg = container.querySelector('.sparkline-svg');
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'sparkline-svg');
+    svg.setAttribute('viewBox', '0 0 80 24');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.style.cssText = 'position:absolute;bottom:0;left:0;right:0;width:100%;height:28px;opacity:0.25;pointer-events:none;z-index:0;';
+    container.style.position = 'relative';
+    container.appendChild(svg);
+  }
+
+  const w = 80, h = 24;
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const step = w / (values.length - 1);
+
+  const points = values.map((v, i) => {
+    const x = i * step;
+    const y = h - ((v - min) / range) * (h - 2) - 1;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const fillPoints = [`0,${h}`, ...points, `${w},${h}`].join(' ');
+
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="sg-${containerId}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.4"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <polygon points="${fillPoints}" fill="url(#sg-${containerId})" />
+    <polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  `;
+}
+
+// ─── Hotkeys ─────────────────────────────────────────────────────
+function initHotkeys() {
+  document.addEventListener('keydown', (e) => {
+    // Don't trigger in inputs
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    if (e.target.isContentEditable) return;
+
+    // Ctrl+K / Cmd+K — focus search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      const search = document.getElementById('global-search');
+      if (search) search.focus();
+      return;
+    }
+
+    // Escape — close modals
+    if (e.key === 'Escape') {
+      const modal = document.getElementById('user-modal');
+      if (modal && !modal.classList.contains('hidden')) {
+        closeUserModal({ target: modal });
+        return;
+      }
+      const confirm = document.getElementById('confirm-dialog-backdrop');
+      if (confirm) { confirm.remove(); return; }
+      // Clear search
+      const search = document.getElementById('global-search');
+      if (search && document.activeElement === search) {
+        search.value = '';
+        onSearch('');
+        search.blur();
+        return;
+      }
+    }
+
+    // Number keys 1-6 — tab switching
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      const tabs = ['dashboard', 'sessions', 'suspects', 'incidents', 'relations', 'rules'];
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= tabs.length) {
+        showTab(tabs[num - 1]);
+        return;
+      }
+
+      // R — refresh
+      if (e.key === 'r' || e.key === 'R') {
+        manualRefresh();
+        return;
+      }
+    }
+  });
+}
+
+// ─── Web Notifications ───────────────────────────────────────────
+let _webNotificationsEnabled = false;
+let _lastNotifiedSuspectsCount = -1;
+let _lastNotifiedIncidentsCount = -1;
+
+function initWebNotifications() {
+  if (!('Notification' in window)) return;
+
+  if (Notification.permission === 'granted') {
+    _webNotificationsEnabled = true;
+  } else if (Notification.permission !== 'denied') {
+    Notification.requestPermission().then(p => {
+      _webNotificationsEnabled = (p === 'granted');
+    });
+  }
+}
+
+function sendWebNotification(title, body, icon = '⚠️') {
+  if (!_webNotificationsEnabled || document.hasFocus()) return;
+
+  try {
+    const n = new Notification(title, {
+      body,
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
+      tag: 'rwm-alert',
+      renotify: true,
+      silent: false,
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+    setTimeout(() => n.close(), 10000);
+  } catch (e) { /* ignore */ }
+}
+
+// Hook into sound alerts to also send web notifications
+const _origCheckSoundAlerts = typeof checkSoundAlerts === 'function' ? checkSoundAlerts : null;
+function checkSoundAlertsWithNotify() {
+  if (_origCheckSoundAlerts) _origCheckSoundAlerts();
+
+  // Check for new critical suspects/incidents
+  const suspects = _cachedSuspects || getSuspects();
+  const incidents = (state.data && state.data.incidents) || [];
+  const openIncidents = incidents.filter(i => i.status !== 'resolved' && i.status !== 'banned');
+
+  if (_lastNotifiedSuspectsCount >= 0 && suspects.length > _lastNotifiedSuspectsCount) {
+    const newCount = suspects.length - _lastNotifiedSuspectsCount;
+    const critical = suspects.filter(s => s.riskLevel === 'critical');
+    if (critical.length > 0) {
+      sendWebNotification(
+        `🔴 ${newCount} новых подозрительных`,
+        `Critical: ${critical.map(s => s.name || s.key).slice(0, 3).join(', ')}`
+      );
+    }
+  }
+
+  if (_lastNotifiedIncidentsCount >= 0 && openIncidents.length > _lastNotifiedIncidentsCount) {
+    sendWebNotification(
+      '🚨 Новый инцидент',
+      `Открытых инцидентов: ${openIncidents.length}`
+    );
+  }
+
+  _lastNotifiedSuspectsCount = suspects.length;
+  _lastNotifiedIncidentsCount = openIncidents.length;
+}
+
+// ─── Bulk Actions ────────────────────────────────────────────────
+function toggleBulkSelect(userKey, checkbox) {
+  if (checkbox.checked) {
+    state.bulkSelected.add(userKey);
+  } else {
+    state.bulkSelected.delete(userKey);
+  }
+  updateBulkActionBar();
+}
+
+function toggleBulkSelectAll(checked) {
+  const suspects = _cachedSuspects || getSuspects();
+  if (checked) {
+    suspects.forEach(s => state.bulkSelected.add(s.key));
+  } else {
+    state.bulkSelected.clear();
+  }
+  // Re-check all visible checkboxes
+  document.querySelectorAll('.bulk-checkbox').forEach(cb => { cb.checked = checked; });
+  updateBulkActionBar();
+}
+
+function updateBulkActionBar() {
+  let bar = document.getElementById('bulk-action-bar');
+  const count = state.bulkSelected.size;
+
+  if (count === 0) {
+    if (bar) bar.remove();
+    return;
+  }
+
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'bulk-action-bar';
+    bar.className = 'bulk-action-bar';
+    document.body.appendChild(bar);
+  }
+
+  bar.innerHTML = `
+    <div class="bulk-bar-info">
+      <span class="bulk-bar-count">${count}</span> выбрано
+    </div>
+    <div class="bulk-bar-actions">
+      <button class="bulk-btn bulk-btn-warn" onclick="executeBulkAction('ban')" title="Забанить выбранных">
+        ${IC.ban} Забанить (${count})
+      </button>
+      <button class="bulk-btn bulk-btn-wl" onclick="executeBulkAction('whitelist_add')" title="В белый список">
+        ${IC.shield} Whitelist (${count})
+      </button>
+      <button class="bulk-btn bulk-btn-cancel" onclick="clearBulkSelection()">
+        Отмена
+      </button>
+    </div>
+  `;
+}
+
+function clearBulkSelection() {
+  state.bulkSelected.clear();
+  document.querySelectorAll('.bulk-checkbox').forEach(cb => { cb.checked = false; });
+  updateBulkActionBar();
+}
+
+async function executeBulkAction(action) {
+  const userKeys = Array.from(state.bulkSelected);
+  if (userKeys.length === 0) return;
+
+  const actionName = action === 'ban' ? 'забанить' : action === 'unban' ? 'разбанить' :
+    action === 'whitelist_add' ? 'добавить в whitelist' : 'удалить из whitelist';
+
+  showConfirmDialog({
+    title: `Массовое действие: ${actionName}`,
+    icon: action === 'ban' ? 'ban' : 'shield',
+    message: `<div>Выбрано пользователей: <b>${userKeys.length}</b></div>`,
+    warning: action === 'ban' ? 'Подписки будут ОТКЛЮЧЕНЫ для всех выбранных пользователей.' : '',
+    confirmText: `Да, ${actionName} (${userKeys.length})`,
+    confirmClass: action === 'ban' ? 'confirm-btn-yes' : 'confirm-btn-green',
+    onConfirm: async () => {
+      try {
+        const res = await fetch('/api/bulk-action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ userKeys, action })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        toast(`${actionName}: ${data.success.length} ок, ${data.failed.length} ошибок`, data.failed.length > 0 ? 'warning' : 'ok');
+        clearBulkSelection();
+        await loadAll();
+      } catch (e) {
+        toast(`Ошибка массового действия: ${e.message}`, 'error');
+      }
+    },
+  });
 }

@@ -169,6 +169,10 @@ function createDetector(options = {}) {
     const subPlatformSignal = detectMultiPlatformSub(u, state, keys);
     if (subPlatformSignal) signals.push(subPlatformSignal);
 
+    // ═══ STRONG: Subscription Storm (#12) ═══
+    const subStormSignal = detectSubStorm(u, state, keys);
+    if (subStormSignal) signals.push(subStormSignal);
+
     const context = buildContext(u, state);
     return { signals, context };
   }
@@ -634,8 +638,19 @@ function createDetector(options = {}) {
   }
 
   // ─── Confidence Score ──────────────────────────────────────────
-  // Counts independent evidence types to measure proof strength.
+  // Weighted evidence scoring — different evidence types have different weight.
   // Each evidence category is independent (geo, temporal, device, network, behavioral).
+  const EVIDENCE_WEIGHTS = {
+    device: 30,         // HWID-based: strongest physical evidence
+    geographic: 20,     // Multi-city/impossible travel
+    network: 20,        // ASN/distinct networks
+    temporal: 15,       // 24/7, behavior shift
+    identity: 15,       // Fingerprint/HWID sharing
+    traffic: 10,        // Volume anomalies
+    infrastructure: 10, // VPN/datacenter usage
+    subscription: 15,   // Multi-platform sub requests
+  };
+
   function computeConfidence(signals, context) {
     const active = signals.filter(s => s.active);
     if (active.length === 0) return { score: 0, level: 'none', types: [] };
@@ -656,21 +671,33 @@ function createDetector(options = {}) {
         evidenceTypes.add('identity');
       if (['isp_datacenter_heavy', 'isp_mix'].includes(s.id))
         evidenceTypes.add('infrastructure');
+      if (['multi_platform_sub', 'multi_device_sub', 'sub_storm'].includes(s.id))
+        evidenceTypes.add('subscription');
     }
 
-    const typeCount = evidenceTypes.size;
     const types = Array.from(evidenceTypes);
 
-    let score, level;
-    if (typeCount >= 4) { score = 95; level = 'confirmed'; }
-    else if (typeCount === 3) { score = 85; level = 'high'; }
-    else if (typeCount === 2) { score = 60; level = 'medium'; }
-    else { score = 30; level = 'low'; }
+    // Weighted confidence: sum matched weights / total possible weight
+    const matchedWeight = types.reduce((sum, t) => sum + (EVIDENCE_WEIGHTS[t] || 10), 0);
+    const maxWeight = Object.values(EVIDENCE_WEIGHTS).reduce((a, b) => a + b, 0);
+    let score = Math.round((matchedWeight / maxWeight) * 100);
 
     // Boost if deterministic signal present
     if (active.some(s => s.category === 'deterministic')) {
-      score = Math.min(99, score + 10);
+      score = Math.min(99, score + 15);
     }
+
+    // Ensure minimum by type count
+    const typeCount = types.length;
+    if (typeCount >= 4 && score < 85) score = 85;
+    else if (typeCount === 3 && score < 70) score = 70;
+    else if (typeCount === 2 && score < 50) score = 50;
+    else if (typeCount === 1 && score < 25) score = 25;
+
+    const level = score >= 85 ? 'confirmed'
+      : score >= 60 ? 'high'
+      : score >= 40 ? 'medium'
+      : 'low';
 
     return { score, level, types };
   }
@@ -892,6 +919,60 @@ function createDetector(options = {}) {
       return {
         id: 'multi_device_sub', category: 'weak', active: true, points: 10,
         reason: `${buildIds.length} разных устройств обновляют подписку`,
+      };
+    }
+
+    return null;
+  }
+
+  // ─── #12 Subscription Storm Detection ────────────────────────
+  // Detects rapid subscription key distribution: many unique buildIds
+  // requesting the subscription in a short time window.
+  function detectSubStorm(u, state, keys) {
+    const subHistory = state.subHistory;
+    if (!subHistory) return null;
+
+    let hist = null;
+    for (const key of keys) {
+      if (subHistory[key]) { hist = subHistory[key]; break; }
+    }
+    if (!hist || !Array.isArray(hist.records) || hist.records.length < 3) return null;
+
+    // Check for burst: many unique buildIds in a 5-minute window
+    const STORM_WINDOW_MS = 5 * 60 * 1000;
+    const now = Date.now();
+    const recentRecords = hist.records.filter(r => r.ts && (now - r.ts) < STORM_WINDOW_MS);
+
+    if (recentRecords.length < 5) {
+      // Also check for longer-term storm: 15+ unique buildIds in last hour
+      const HOUR_MS = 60 * 60 * 1000;
+      const hourRecords = hist.records.filter(r => r.ts && (now - r.ts) < HOUR_MS);
+      const hourBuildIds = new Set(hourRecords.map(r => r.buildId).filter(Boolean));
+
+      if (hourBuildIds.size >= 15) {
+        return {
+          id: 'sub_storm', category: 'strong', active: true, points: 20,
+          reason: `${hourBuildIds.size} уникальных устройств запросили подписку за последний час`,
+        };
+      }
+
+      return null;
+    }
+
+    const stormBuildIds = new Set(recentRecords.map(r => r.buildId).filter(Boolean));
+    const stormIps = new Set(recentRecords.map(r => r.ip).filter(Boolean));
+
+    if (stormBuildIds.size >= 10) {
+      return {
+        id: 'sub_storm', category: 'strong', active: true, points: 30,
+        reason: `шторм подписки: ${stormBuildIds.size} устройств с ${stormIps.size} IP за 5 минут — ключ активно распространяется`,
+      };
+    }
+
+    if (stormBuildIds.size >= 5) {
+      return {
+        id: 'sub_storm', category: 'strong', active: true, points: 20,
+        reason: `${stormBuildIds.size} устройств запросили подписку за 5 минут`,
       };
     }
 

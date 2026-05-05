@@ -64,6 +64,41 @@ function checkLoginRateLimit(ip) {
   if (entry.count > LOGIN_RATE_LIMIT) return false;
   return true;
 }
+
+// ─── Rate Limiting (actions — ban, notify, whitelist, etc.) ────
+const actionAttempts = new Map();
+const ACTION_RATE_LIMIT = 30;
+const ACTION_RATE_WINDOW_MS = 60 * 1000;
+function checkActionRateLimit(sessionId) {
+  const now = Date.now();
+  const entry = actionAttempts.get(sessionId);
+  if (!entry || now - entry.windowStart > ACTION_RATE_WINDOW_MS) {
+    actionAttempts.set(sessionId, { windowStart: now, count: 1 });
+    return true;
+  }
+  entry.count++;
+  if (entry.count > ACTION_RATE_LIMIT) return false;
+  return true;
+}
+function requireActionRateLimit(req, res) {
+  const session = getSession(req);
+  if (!session) return true; // auth will handle it
+  if (!checkActionRateLimit(session.id)) {
+    sendJson(res, 429, { error: 'Слишком много действий. Подождите минуту.' });
+    return false;
+  }
+  return true;
+}
+
+// ─── State version tracking (ETag) ─────────────────────────────
+let stateVersion = 0;
+let stateETag = '"0"';
+let cachedStateJson = null;
+function invalidateStateCache() {
+  stateVersion++;
+  stateETag = `"v${stateVersion}-${Date.now().toString(36)}"`;
+  cachedStateJson = null;
+}
 function getClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'];
   if (forwarded) return String(forwarded).split(',')[0].trim();
@@ -255,6 +290,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === '/api/bulk-action') {
+      await handleBulkAction(req, res);
+      return;
+    }
+
     await serveStatic(req, res, pathname);
   } catch (e) {
     console.error('[server] unexpected error:', e);
@@ -301,8 +341,11 @@ function handleHealth(req, res) {
   }
   const syncStatus = dataSync.getStatus();
   const uptime = process.uptime();
+  const mem = process.memoryUsage();
+  const dbStats = store.getHealthData ? store.getHealthData() : {};
   sendJson(res, 200, {
     status: 'ok',
+    version: '2.0.0',
     uptime: Math.round(uptime),
     uptimeHuman: uptime >= 3600 ? `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m` : `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`,
     sync: {
@@ -310,11 +353,18 @@ function handleHealth(req, res) {
       lastFinishedAt: syncStatus.lastFinishedAt,
       nextSyncAt: syncStatus.nextSyncAt,
       isSyncing: syncStatus.isSyncing,
+      intervalSeconds: Math.round(Number(SYNC_INTERVAL_SECONDS)),
     },
     remnawaveConfigured: isRemnawaveConfigured(),
     sseClients: sseClients.size,
     sessions: sessions.size,
-    memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    stateVersion,
+    memory: {
+      rss: Math.round(mem.rss / 1024 / 1024),
+      heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
+    },
+    db: dbStats,
     nodeVersion: process.version,
   });
 }
@@ -419,7 +469,24 @@ async function handleState(req, res) {
     return;
   }
 
-  sendJson(res, 200, store.getState());
+  // ETag / 304 support — avoid resending unchanged state
+  const clientETag = req.headers['if-none-match'];
+  if (clientETag && clientETag === stateETag) {
+    res.writeHead(304, { 'ETag': stateETag });
+    res.end();
+    return;
+  }
+
+  if (!cachedStateJson) {
+    cachedStateJson = JSON.stringify(store.getState());
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'ETag': stateETag,
+    'Cache-Control': 'no-store',
+  });
+  res.end(cachedStateJson);
 }
 
 async function handleSyncStatus(req, res) {
@@ -449,6 +516,7 @@ async function handleRefresh(req, res) {
 }
 async function handleBan(req, res) {
   if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' });
     return;
@@ -511,6 +579,7 @@ async function handleBan(req, res) {
       if (action === 'ban') store.banUser(userKey, body.reason || null);
       else store.unbanUser(userKey);
       store.recordAudit(APP_USERNAME, getClientIp(req), action, userKey, { reason: body.reason || null, apiStatus: result.status });
+      invalidateStateCache();
       console.log(`[ban] ${action} user ${userKey}: OK (API ${result.status})`);
       sendJson(res, 200, { ok: true, banned: action === 'ban', apiResponse: result.body });
     } else {
@@ -525,6 +594,7 @@ async function handleBan(req, res) {
 
 async function handleWhitelist(req, res) {
   if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
   let body;
   try { body = JSON.parse(await readBody(req)); } catch { sendJson(res, 400, { error: 'Invalid JSON' }); return; }
   const userKey = String(body.userKey || '');
@@ -533,10 +603,12 @@ async function handleWhitelist(req, res) {
   if (req.method === 'POST') {
     store.addToWhitelist(userKey, body.note || null);
     store.recordAudit(APP_USERNAME, getClientIp(req), 'whitelist_add', userKey, { note: body.note || null });
+    invalidateStateCache();
     sendJson(res, 200, { ok: true, whitelisted: true });
   } else if (req.method === 'DELETE') {
     store.removeFromWhitelist(userKey);
     store.recordAudit(APP_USERNAME, getClientIp(req), 'whitelist_remove', userKey, null);
+    invalidateStateCache();
     sendJson(res, 200, { ok: true, whitelisted: false });
   } else {
     sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST, DELETE' });
@@ -598,6 +670,7 @@ async function handleSubHistory(req, res) {
 function remnawaveApi(method, apiPath, body = null, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const base = new URL(REMNAWAVE_BASE_URL);
+    const proto = base.protocol === 'https:' ? https : require('http');
     const opts = {
       hostname: base.hostname,
       port: base.port || (base.protocol === 'https:' ? 443 : 80),
@@ -608,11 +681,15 @@ function remnawaveApi(method, apiPath, body = null, timeoutMs = 10000) {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      rejectAuthorized: false,
     };
-    const proto = base.protocol === 'https:' ? https : require('http');
     const timer = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, timeoutMs);
     const req = proto.request(opts, (resp) => {
+      // Reject redirects to prevent SSRF
+      if (resp.statusCode >= 300 && resp.statusCode < 400) {
+        clearTimeout(timer);
+        reject(new Error(`Redirect ${resp.statusCode} not followed (SSRF prevention)`));
+        return;
+      }
       const chunks = [];
       resp.on('data', (c) => chunks.push(c));
       resp.on('end', () => {
@@ -627,6 +704,70 @@ function remnawaveApi(method, apiPath, body = null, timeoutMs = 10000) {
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
+}
+
+// ─── Bulk Actions ───────────────────────────────────────────────
+async function handleBulkAction(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' });
+    return;
+  }
+
+  let body;
+  try { body = JSON.parse(await readBody(req)); } catch { sendJson(res, 400, { error: 'Invalid JSON' }); return; }
+  const userKeys = Array.isArray(body.userKeys) ? body.userKeys.map(String).filter(Boolean) : [];
+  const action = String(body.action || '');
+
+  if (userKeys.length === 0) { sendJson(res, 400, { error: 'userKeys array is required' }); return; }
+  if (userKeys.length > 50) { sendJson(res, 400, { error: 'Maximum 50 users per bulk action' }); return; }
+
+  const validActions = ['ban', 'unban', 'whitelist_add', 'whitelist_remove'];
+  if (!validActions.includes(action)) {
+    sendJson(res, 400, { error: `action must be one of: ${validActions.join(', ')}` });
+    return;
+  }
+
+  if (!isRemnawaveConfigured() && (action === 'ban' || action === 'unban')) {
+    sendJson(res, 500, { error: 'Remnawave API is not configured' });
+    return;
+  }
+
+  const results = { success: [], failed: [] };
+  const clientIp = getClientIp(req);
+
+  for (const userKey of userKeys) {
+    try {
+      if (action === 'ban' || action === 'unban') {
+        const apiAction = action === 'ban' ? 'disable' : 'enable';
+        const apiPath = `/api/users/${encodeURIComponent(userKey)}/actions/${apiAction}`;
+        const result = await remnawaveApi('POST', apiPath);
+        if (result.statusCode >= 200 && result.statusCode < 300) {
+          if (action === 'ban') store.banUser(userKey, body.reason || null);
+          else store.unbanUser(userKey);
+          store.recordAudit(APP_USERNAME, clientIp, `bulk_${action}`, userKey, { reason: body.reason || null });
+          results.success.push(userKey);
+        } else {
+          results.failed.push({ userKey, error: `API ${result.statusCode}` });
+        }
+      } else if (action === 'whitelist_add') {
+        store.addToWhitelist(userKey, body.note || null);
+        store.recordAudit(APP_USERNAME, clientIp, 'bulk_whitelist_add', userKey, { note: body.note || null });
+        results.success.push(userKey);
+      } else if (action === 'whitelist_remove') {
+        store.removeFromWhitelist(userKey);
+        store.recordAudit(APP_USERNAME, clientIp, 'bulk_whitelist_remove', userKey, null);
+        results.success.push(userKey);
+      }
+    } catch (e) {
+      results.failed.push({ userKey, error: e.message });
+    }
+  }
+
+  invalidateStateCache();
+  console.log(`[bulk] ${action}: ${results.success.length} ok, ${results.failed.length} failed`);
+  sendJson(res, 200, { ok: true, action, ...results });
 }
 
 // ─── HWID Devices ───────────────────────────────────────────────
@@ -725,6 +866,7 @@ async function handleFetchUserIps(req, res, parsedUrl) {
 
 async function handleNotifyUser(req, res) {
   if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' });
     return;
@@ -1274,7 +1416,10 @@ server.listen(PORT, HOST, () => {
     console.warn('  Warning: REMNAWAVE_BASE_URL or REMNAWAVE_API_TOKEN is not configured.');
   } else {
     dataSync.start();
-    dataSync.onSync(() => broadcastSSE('sync_complete', { ts: Date.now() }));
+    dataSync.onSync(() => {
+      invalidateStateCache();
+      broadcastSSE('sync_complete', { ts: Date.now(), stateVersion });
+    });
     console.log(`  SQLite cache: ${store.dbPath}`);
     console.log(`  Sync interval: ${SYNC_INTERVAL_SECONDS}s`);
   }
