@@ -41,11 +41,11 @@ ask() {
   local default="${2:-}"
   local result=""
   if [ -n "$default" ]; then
-    echo -ne "  ${GREEN}?${NC}  ${prompt} ${DIM}(${default})${NC}: "
+    echo -ne "  ${GREEN}?${NC}  ${prompt} ${DIM}(${default})${NC}: " >&2
     read -r result
     echo "${result:-$default}"
   else
-    echo -ne "  ${GREEN}?${NC}  ${prompt}: "
+    echo -ne "  ${GREEN}?${NC}  ${prompt}: " >&2
     read -r result
     echo "$result"
   fi
@@ -54,9 +54,9 @@ ask() {
 ask_secret() {
   local prompt="$1"
   local result=""
-  echo -ne "  ${GREEN}?${NC}  ${prompt}: "
+  echo -ne "  ${GREEN}?${NC}  ${prompt}: " >&2
   read -rs result
-  echo ""
+  echo "" >&2
   echo "$result"
 }
 
@@ -65,7 +65,7 @@ ask_yn() {
   local default="${2:-y}"
   local hint="Y/n"
   [ "$default" = "n" ] && hint="y/N"
-  echo -ne "  ${GREEN}?${NC}  ${prompt} ${DIM}(${hint})${NC}: "
+  echo -ne "  ${GREEN}?${NC}  ${prompt} ${DIM}(${hint})${NC}: " >&2
   local result=""
   read -r result
   result="${result:-$default}"
