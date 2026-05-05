@@ -3443,7 +3443,7 @@ function getSuspects() {
         _hwidCount: devicesCount,
         _hwidLimit: limit,
         _excess: devicesCount - limit,
-        _riskScore: Math.min(100, 60 + (devicesCount - limit) * 10),
+        _riskScore: Math.min(100, 60 + Math.min(40, (devicesCount - limit) * 15)),
         _reason: 'hwid_over_limit'
       });
     }
@@ -3465,7 +3465,7 @@ function getSuspects() {
         _hwidCount: devicesCount,
         _hwidLimit: limit,
         _excess: devicesCount - limit,
-        _riskScore: Math.min(100, 60 + (devicesCount - limit) * 10),
+        _riskScore: Math.min(100, 60 + Math.min(40, (devicesCount - limit) * 15)),
         _reason: 'hwid_over_limit'
       });
     }

@@ -648,7 +648,9 @@ function createStore(options = {}) {
     for (const u of users || []) {
       const key = userKey(u);
       if (key) {
-        userLimits[key] = Number(u.hwidDeviceLimit || u.activeUserDevices || u.deviceLimit || 2);
+        const limit = u.hwidDeviceLimit != null ? u.hwidDeviceLimit
+          : (u.hwidDevicesLimit != null ? u.hwidDevicesLimit : 2);
+        userLimits[key] = Number(limit);
       }
     }
 

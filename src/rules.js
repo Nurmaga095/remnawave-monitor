@@ -103,17 +103,6 @@ function createRuleEngine(db) {
     if (rules.length === 0) return { triggered: [], total: 0 };
 
     const users = stateData.users || [];
-    const activeIps = stateData.activeIps || {};
-    const detection = stateData.detection || {};
-    const suspects = detection.suspects || [];
-    const proxyData = stateData.proxyData || {};
-    const hwidChurn = stateData.hwidChurn || {};
-
-    const suspectMap = {};
-    for (const s of suspects) {
-      suspectMap[s.key] = s;
-    }
-
     const now = Date.now();
     const triggered = [];
 
@@ -121,54 +110,15 @@ function createRuleEngine(db) {
       const cooldownMs = (rule.cooldownHours || 24) * 60 * 60 * 1000;
 
       for (const user of users) {
-        const key = String(user.userUuid || user.uuid || user.id || user.userId || user.username || user.name || '');
-        if (!key) continue;
+        const context = buildRuleContext(user, stateData, now);
+        if (!context) continue;
+        const { key, ctx } = context;
 
         // Check cooldown — don't trigger same rule for same user within cooldown
         const lastTrigger = db.prepare(
           'SELECT triggered_at FROM rule_triggers WHERE rule_id = ? AND user_key = ? ORDER BY triggered_at DESC LIMIT 1'
         ).get(rule.id, key);
         if (lastTrigger && (now - lastTrigger.triggered_at) < cooldownMs) continue;
-
-        // Build context for this user
-        const userIps = activeIps[key] || [];
-        const suspect = suspectMap[key] || null;
-        const hwidCount = Number(user.activeUserDevices || user.devicesCount || 0);
-        const hwidLimit = Number(user.hwidDeviceLimit || user.activeUserDevices || 2);
-
-        // Check which IPs are VPN/Proxy
-        let hasVpn = false;
-        let hasProxy = false;
-        let hasTor = false;
-        for (const entry of userIps) {
-          const ip = typeof entry === 'string' ? entry : entry && entry.ip;
-          if (ip && proxyData[ip]) {
-            if (proxyData[ip].isVPN) hasVpn = true;
-            if (proxyData[ip].isProxy) hasProxy = true;
-            if (proxyData[ip].isTor) hasTor = true;
-          }
-        }
-
-        const ctx = {
-          hwidCount,
-          hwidLimit,
-          ipCount: userIps.length,
-          isVPN: hasVpn,
-          isProxy: hasProxy,
-          isTor: hasTor,
-          riskScore: suspect ? (suspect.riskScore || 0) : 0,
-          riskLevel: suspect ? (suspect.riskLevel || 'clean') : 'clean',
-          status: String(user.status || '').toUpperCase(),
-          trafficBytes: Number(user.usedTrafficBytes || user.usedTraffic || 0),
-          trafficGB: Number(user.usedTrafficBytes || user.usedTraffic || 0) / (1024 * 1024 * 1024),
-          hwidChurn: hwidChurn[key] || 0,
-          isSuspect: !!suspect,
-          signalCount: suspect ? (suspect.signals || []).length : 0,
-          hasMultiCity: suspect ? (suspect.signals || []).some(s => s.id.startsWith('multi_city')) : false,
-          hasImpossibleTravel: suspect ? (suspect.signals || []).some(s => s.id === 'impossible_travel') : false,
-          hasVelocityAbuse: suspect ? (suspect.signals || []).some(s => s.id.startsWith('velocity_')) : false,
-          daysActive: user.createdAt ? Math.floor((now - new Date(user.createdAt).getTime()) / (24 * 60 * 60 * 1000)) : 0,
-        };
 
         // Evaluate conditions
         const condResults = rule.conditions.map(cond => evaluateCondition(cond, ctx));
@@ -247,6 +197,162 @@ function createRuleEngine(db) {
     };
   }
 
+  function buildRuleContext(user, stateData, now = Date.now()) {
+    const key = getUserKey(user);
+    if (!key) return null;
+
+    const userIps = getActiveIpsForUser(user, stateData);
+    const detectionMatch = getDetectionForUser(user, stateData);
+    const detectionEntry = detectionMatch ? detectionMatch.entry : null;
+    const signals = detectionEntry && Array.isArray(detectionEntry.signals)
+      ? detectionEntry.signals
+      : [];
+    const hwidCount = getHwidCountForUser(user, stateData);
+    const hwidLimit = getHwidLimitForUser(user);
+    const trafficBytes = getTrafficBytes(user);
+    const hasProxyFlags = getProxyFlags(userIps, stateData.proxyData || {});
+
+    const ctx = {
+      hwidCount,
+      hwidLimit,
+      ipCount: userIps.length,
+      isVPN: hasProxyFlags.isVPN,
+      isProxy: hasProxyFlags.isProxy,
+      isTor: hasProxyFlags.isTor,
+      riskScore: detectionEntry ? Number(detectionEntry.riskScore || 0) : 0,
+      riskLevel: detectionEntry ? (detectionEntry.riskLevel || 'clean') : 'clean',
+      status: String(user.status || '').toUpperCase(),
+      trafficBytes,
+      trafficGB: trafficBytes / (1024 * 1024 * 1024),
+      hwidChurn: getHwidChurnForUser(user, stateData),
+      isSuspect: Boolean(detectionMatch && detectionMatch.list === 'suspects'),
+      signalCount: signals.length,
+      hasMultiCity: signals.some(s => String(s.id || '').startsWith('multi_city')),
+      hasImpossibleTravel: signals.some(s => s.id === 'impossible_travel'),
+      hasVelocityAbuse: signals.some(s => String(s.id || '').startsWith('velocity_')),
+      daysActive: user.createdAt ? Math.floor((now - new Date(user.createdAt).getTime()) / (24 * 60 * 60 * 1000)) : 0,
+    };
+
+    return { key, ctx };
+  }
+
+  function getUserKey(user) {
+    if (!user) return '';
+    return String(user.userUuid || user.uuid || user.id || user.userId || user.username || user.name || '');
+  }
+
+  function getUserAliases(user) {
+    if (!user) return [];
+    return Array.from(new Set([
+      getUserKey(user),
+      user.userUuid,
+      user.uuid,
+      user.id,
+      user.userId,
+      user.shortUuid,
+      user.shortUserUuid,
+      user.username,
+      user.name,
+    ]
+      .filter(value => value !== null && value !== undefined && value !== '')
+      .map(String)));
+  }
+
+  function getActiveIpsForUser(user, stateData) {
+    const activeIps = stateData.activeIps || {};
+    const result = [];
+    const seen = new Set();
+
+    for (const alias of getUserAliases(user)) {
+      const entries = activeIps[alias];
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const ip = typeof entry === 'string' ? entry : entry && entry.ip;
+        if (!ip || seen.has(ip)) continue;
+        seen.add(ip);
+        result.push(entry);
+      }
+    }
+
+    return result;
+  }
+
+  function getDetectionForUser(user, stateData) {
+    const aliases = getUserAliases(user);
+    const detection = stateData.detection || {};
+    for (const listName of ['suspects', 'observed']) {
+      const list = Array.isArray(detection[listName]) ? detection[listName] : [];
+      const entry = list.find(item => {
+        const key = String(item && (item.key || item.userKey || '') || '');
+        return key && aliases.includes(key);
+      });
+      if (entry) return { entry, list: listName };
+    }
+    return null;
+  }
+
+  function getHwidCountForUser(user, stateData) {
+    const aliases = getUserAliases(user);
+    const hwidDevices = stateData.hwidDevices || {};
+    for (const alias of aliases) {
+      const devices = hwidDevices[alias];
+      if (Array.isArray(devices) && devices.length > 0) return devices.length;
+    }
+
+    const topEntry = (stateData.hwidTop || []).find(item => {
+      const topAliases = getUserAliases(item);
+      return topAliases.some(alias => aliases.includes(alias)) ||
+        (item.username && user.username && item.username === user.username);
+    });
+    if (topEntry) return Number(topEntry.devicesCount || topEntry.count || 0);
+
+    return Number(
+      user.activeUserDevices ??
+      user.devicesCount ??
+      user.hwidDevicesCount ??
+      user.hwid_count ??
+      0
+    );
+  }
+
+  function getHwidLimitForUser(user) {
+    const value = user.hwidDeviceLimit != null ? user.hwidDeviceLimit
+      : (user.hwidDevicesLimit != null ? user.hwidDevicesLimit : null);
+    if (value !== null && !Number.isNaN(Number(value))) return Number(value);
+    return 2;
+  }
+
+  function getHwidChurnForUser(user, stateData) {
+    const hwidChurn = stateData.hwidChurn || {};
+    for (const alias of getUserAliases(user)) {
+      if (Object.prototype.hasOwnProperty.call(hwidChurn, alias)) {
+        return Number(hwidChurn[alias] || 0);
+      }
+    }
+    return 0;
+  }
+
+  function getTrafficBytes(user) {
+    return Number(
+      user.usedTrafficBytes ??
+      user.usedTraffic ??
+      (user.userTraffic && user.userTraffic.usedTrafficBytes) ??
+      0
+    );
+  }
+
+  function getProxyFlags(userIps, proxyData) {
+    const flags = { isVPN: false, isProxy: false, isTor: false };
+    for (const entry of userIps) {
+      const ip = typeof entry === 'string' ? entry : entry && entry.ip;
+      if (!ip || !proxyData[ip]) continue;
+      if (proxyData[ip].isVPN) flags.isVPN = true;
+      if (proxyData[ip].isProxy) flags.isProxy = true;
+      if (proxyData[ip].isTor) flags.isTor = true;
+    }
+    return flags;
+  }
+
   // ─── Triggers management ─────────────────────────────────────────
 
   function getRecentTriggers(limit = 50) {
@@ -283,48 +389,13 @@ function createRuleEngine(db) {
     if (!rule) return { error: 'Rule not found', matches: [] };
 
     const users = stateData.users || [];
-    const activeIps = stateData.activeIps || {};
-    const detection = stateData.detection || {};
-    const suspects = detection.suspects || [];
-    const proxyData = stateData.proxyData || {};
-    const hwidChurn = stateData.hwidChurn || {};
-
-    const suspectMap = {};
-    for (const s of suspects) { suspectMap[s.key] = s; }
-
     const now = Date.now();
     const matches = [];
 
     for (const user of users) {
-      const key = String(user.userUuid || user.uuid || user.id || '');
-      if (!key) continue;
-
-      const userIps = activeIps[key] || [];
-      const suspect = suspectMap[key] || null;
-      const hwidCount = Number(user.activeUserDevices || user.devicesCount || 0);
-      const hwidLimit = Number(user.hwidDeviceLimit || 2);
-
-      let hasVpn = false, hasProxy = false, hasTor = false;
-      for (const entry of userIps) {
-        const ip = typeof entry === 'string' ? entry : entry && entry.ip;
-        if (ip && proxyData[ip]) {
-          if (proxyData[ip].isVPN) hasVpn = true;
-          if (proxyData[ip].isProxy) hasProxy = true;
-          if (proxyData[ip].isTor) hasTor = true;
-        }
-      }
-
-      const ctx = {
-        hwidCount, hwidLimit,
-        ipCount: userIps.length,
-        isVPN: hasVpn, isProxy: hasProxy, isTor: hasTor,
-        riskScore: suspect ? (suspect.riskScore || 0) : 0,
-        status: String(user.status || '').toUpperCase(),
-        trafficGB: Number(user.usedTrafficBytes || 0) / (1024 * 1024 * 1024),
-        hwidChurn: hwidChurn[key] || 0,
-        isSuspect: !!suspect,
-        daysActive: user.createdAt ? Math.floor((now - new Date(user.createdAt).getTime()) / (24 * 60 * 60 * 1000)) : 0,
-      };
+      const context = buildRuleContext(user, stateData, now);
+      if (!context) continue;
+      const { key, ctx } = context;
 
       const condResults = rule.conditions.map(cond => evaluateCondition(cond, ctx));
       const passed = rule.conditionLogic === 'OR'
