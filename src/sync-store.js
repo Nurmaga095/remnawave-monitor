@@ -237,7 +237,9 @@ function createStore(options = {}) {
     const users = Array.isArray(snapshot.users) ? snapshot.users : [];
     const activeIps = snapshot.activeIps || {};
     const hwidTop = Array.isArray(snapshot.hwidTop) ? snapshot.hwidTop : [];
-    const hwidDevices = snapshot.hwidDevices || {};
+    const aliasToUserKey = buildUserAliasMap(users);
+    const canonicalUserKey = (key) => aliasToUserKey.get(String(key)) || String(key || '');
+    const hwidDevices = normalizeHwidDevices(snapshot.hwidDevices || {}, canonicalUserKey);
 
     db.prepare('DELETE FROM users').run();
     db.prepare('DELETE FROM active_ips').run();
@@ -334,6 +336,34 @@ function createStore(options = {}) {
           upsertDeviceLink.run(String(hwid), key, ts, ts);
         }
       }
+    }
+
+    const migrateHwidHistoryAlias = db.prepare(`
+      INSERT INTO hwid_history (user_key, hwid, first_seen, last_seen)
+      SELECT ?, hwid, first_seen, last_seen
+      FROM hwid_history
+      WHERE user_key = ?
+      ON CONFLICT(user_key, hwid) DO UPDATE SET
+        first_seen = min(hwid_history.first_seen, excluded.first_seen),
+        last_seen = max(hwid_history.last_seen, excluded.last_seen)
+    `);
+    const migrateDeviceLinkAlias = db.prepare(`
+      INSERT INTO device_account_links (hwid, user_key, first_seen, last_seen)
+      SELECT hwid, ?, first_seen, last_seen
+      FROM device_account_links
+      WHERE user_key = ?
+      ON CONFLICT(hwid, user_key) DO UPDATE SET
+        first_seen = min(device_account_links.first_seen, excluded.first_seen),
+        last_seen = max(device_account_links.last_seen, excluded.last_seen)
+    `);
+    const deleteHwidHistoryAlias = db.prepare('DELETE FROM hwid_history WHERE user_key = ?');
+    const deleteDeviceLinkAlias = db.prepare('DELETE FROM device_account_links WHERE user_key = ?');
+    for (const [alias, canonicalKey] of aliasToUserKey.entries()) {
+      if (!alias || !canonicalKey || alias === canonicalKey) continue;
+      migrateHwidHistoryAlias.run(canonicalKey, alias);
+      migrateDeviceLinkAlias.run(canonicalKey, alias);
+      deleteHwidHistoryAlias.run(alias);
+      deleteDeviceLinkAlias.run(alias);
     }
 
     cleanupOldData(ts);
@@ -562,10 +592,15 @@ function createStore(options = {}) {
   }
 
   function buildRelationGraph(users, geoByIp, activeWindowIps) {
+    const aliasToUserKey = buildUserAliasMap(users || []);
     const userNames = {};
     for (const user of users || []) {
       const key = userKey(user);
-      if (key) userNames[key] = user.username || user.name || key;
+      const name = user.username || user.name || key;
+      if (key) userNames[key] = name;
+      for (const alias of userAliases(user)) {
+        userNames[alias] = name;
+      }
     }
 
     const userRef = (key) => ({
@@ -576,6 +611,7 @@ function createStore(options = {}) {
     const ipMap = new Map();
     const asnMap = new Map();
     for (const [key, entries] of Object.entries(activeWindowIps || {})) {
+      const canonicalKey = aliasToUserKey.get(String(key)) || String(key);
       for (const entry of entries || []) {
         const ip = typeof entry === 'string' ? entry : entry && entry.ip;
         if (!ip) continue;
@@ -586,7 +622,7 @@ function createStore(options = {}) {
           ipMap.set(ip, { ip, geo, users: new Map(), lastSeenAt: 0 });
         }
         const ipItem = ipMap.get(ip);
-        ipItem.users.set(key, userRef(key));
+        ipItem.users.set(canonicalKey, userRef(canonicalKey));
         ipItem.lastSeenAt = Math.max(ipItem.lastSeenAt, lastSeenAt);
 
         const asnKey = geo && geo.asn ? String(geo.asn) : '';
@@ -601,7 +637,7 @@ function createStore(options = {}) {
             });
           }
           const asnItem = asnMap.get(asnKey);
-          asnItem.users.set(key, userRef(key));
+          asnItem.users.set(canonicalKey, userRef(canonicalKey));
           asnItem.ips.add(ip);
         }
       }
@@ -650,7 +686,11 @@ function createStore(options = {}) {
       if (key) {
         const limit = u.hwidDeviceLimit != null ? u.hwidDeviceLimit
           : (u.hwidDevicesLimit != null ? u.hwidDevicesLimit : 2);
-        userLimits[key] = Number(limit);
+        const numericLimit = Number(limit);
+        userLimits[key] = numericLimit;
+        for (const alias of userAliases(u)) {
+          userLimits[alias] = numericLimit;
+        }
       }
     }
 
@@ -663,6 +703,7 @@ function createStore(options = {}) {
     const hwidMap = new Map();
     for (const row of hwidRows) {
       if (!row.hwid || !row.user_key) continue;
+      const canonicalKey = aliasToUserKey.get(String(row.user_key)) || String(row.user_key);
       if (!hwidMap.has(row.hwid)) {
         // Parse device info from raw_json
         let deviceInfo = null;
@@ -686,7 +727,7 @@ function createStore(options = {}) {
         });
       }
       const item = hwidMap.get(row.hwid);
-      item.users.set(row.user_key, userRefWithLimit(row.user_key));
+      item.users.set(canonicalKey, userRefWithLimit(canonicalKey));
       item.firstSeen = Math.min(item.firstSeen, row.first_seen);
       item.lastSeen = Math.max(item.lastSeen, row.last_seen);
     }
@@ -1779,6 +1820,54 @@ function createStore(options = {}) {
 function userKey(user) {
   if (!user) return '';
   return String(user.userUuid || user.uuid || user.id || user.userId || user.username || user.name || '');
+}
+
+function userAliases(user) {
+  if (!user) return [];
+  return Array.from(new Set([
+    userKey(user),
+    user.userUuid,
+    user.uuid,
+    user.id,
+    user.userId,
+    user.shortUuid,
+    user.shortUserUuid,
+    user.username,
+    user.name,
+  ]
+    .filter((value) => value !== null && value !== undefined && value !== '')
+    .map(String)));
+}
+
+function buildUserAliasMap(users) {
+  const map = new Map();
+  for (const user of users || []) {
+    const key = userKey(user);
+    if (!key) continue;
+    for (const alias of userAliases(user)) {
+      if (!map.has(alias)) map.set(alias, key);
+    }
+  }
+  return map;
+}
+
+function normalizeHwidDevices(hwidDevices, canonicalUserKey) {
+  const byUser = {};
+  for (const [rawKey, devices] of Object.entries(hwidDevices || {})) {
+    if (!rawKey || !Array.isArray(devices)) continue;
+    const key = canonicalUserKey(rawKey);
+    if (!key) continue;
+    if (!byUser[key]) byUser[key] = new Map();
+    const deviceMap = byUser[key];
+    devices.forEach((device, index) => {
+      const hwid = device && (device.hwid || device.deviceId || device.id || null);
+      const deviceKey = String(hwid || `device-${index}`);
+      if (!deviceMap.has(deviceKey)) deviceMap.set(deviceKey, device);
+    });
+  }
+  return Object.fromEntries(
+    Object.entries(byUser).map(([key, deviceMap]) => [key, Array.from(deviceMap.values())])
+  );
 }
 
 function addMapCount(map, key, base) {

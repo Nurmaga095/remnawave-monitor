@@ -380,14 +380,10 @@ function createRemnawaveSync(options) {
       try {
         const raw = await api('GET', `/api/hwid/devices/${encodeURIComponent(candidate.uuid)}`);
         const devices = extractArray(raw, ['devices']);
-        for (const alias of candidate.aliases) {
-          devicesByUser[alias] = devices;
-        }
+        devicesByUser[candidate.userKey || candidate.uuid] = devices;
       } catch (e) {
         warnings.push(`[hwid-devices:${candidate.uuid}] ${e.message}`);
-        for (const alias of candidate.aliases) {
-          devicesByUser[alias] = [];
-        }
+        devicesByUser[candidate.userKey || candidate.uuid] = [];
       }
     });
 
@@ -407,9 +403,10 @@ function createRemnawaveSync(options) {
       const uuidKey = String(uuid);
       let candidate = byUuid.get(uuidKey);
       if (!candidate) {
-        candidate = { uuid: uuidKey, aliases: new Set([uuidKey]) };
+        candidate = { uuid: uuidKey, userKey: userKey(user) || uuidKey, aliases: new Set([uuidKey]) };
         byUuid.set(uuidKey, candidate);
       }
+      if (!candidate.userKey) candidate.userKey = userKey(user) || uuidKey;
 
       for (const alias of aliases) {
         if (alias) candidate.aliases.add(alias);
@@ -428,6 +425,7 @@ function createRemnawaveSync(options) {
     return Array.from(byUuid.values())
       .map((candidate) => ({
         uuid: candidate.uuid,
+        userKey: candidate.userKey || candidate.uuid,
         aliases: Array.from(candidate.aliases).filter(Boolean),
       }))
       .filter((candidate) => candidate.uuid && candidate.aliases.length > 0);
