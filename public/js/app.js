@@ -2695,6 +2695,10 @@ function userCardHtml(u) {
     : riskLevel === 'high' ? '#f97316'
     : riskLevel === 'warning' ? 'var(--yellow)'
     : 'var(--green)';
+  const riskLabel = riskLevel === 'critical' ? 'Критично'
+    : riskLevel === 'high' ? 'Высокий'
+    : riskLevel === 'warning' ? 'Внимание'
+    : 'Чисто';
 
   // IP table rows
   const ipRowsHtml = freshIps.slice(0, 12).map(d => {
@@ -2734,6 +2738,11 @@ function userCardHtml(u) {
             ${userStatusBadge(u.status)}
             <code class="uc-uuid">${esc(uuid)}</code>
           </div>
+          <div class="uc-headline-pills">
+            <span class="uc-headline-pill ${hwidCount > hwidLimit ? 'is-danger' : ''}">${IC.hwid}<b>${hwidCount}/${hwidLimit}</b> HWID</span>
+            <span class="uc-headline-pill">${IC.globe}<b>${freshIps.length}</b> IP</span>
+            <span class="uc-headline-pill ${riskScore >= 70 ? 'is-danger' : riskScore >= 40 ? 'is-warn' : 'is-ok'}">${IC.shield}<b>${riskScore}</b> ${esc(riskLabel)}</span>
+          </div>
         </div>
       </div>
       <div class="uc-header-right">
@@ -2746,7 +2755,7 @@ function userCardHtml(u) {
     ${bannerHtml}
 
     <div class="uc-body">
-      <div class="uc-tabs-section" style="border:none;background:none">
+      <div class="uc-tabs-section">
         <div class="uc-tabs-nav">
           <button class="uc-tab active" data-uctab="overview" onclick="switchUcTab('overview')">
             ${IC._s('<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>', 14)}
