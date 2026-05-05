@@ -84,6 +84,16 @@ generate_secret() {
   fi
 }
 
+normalize_domain() {
+  local value="$1"
+  value="$(printf '%s' "$value" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
+  if [[ "$value" =~ https?:// ]]; then
+    value="$(printf '%s' "$value" | sed -E 's#.*https?://##')"
+  fi
+  value="$(printf '%s' "$value" | sed -E 's#/.*$##; s/^[[:space:]]+|[[:space:]]+$//g')"
+  echo "$value"
+}
+
 TOTAL_STEPS=6
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -381,7 +391,9 @@ fi
 
 if [ "$SETUP_CADDY" = true ]; then
   DOMAIN=$(ask "Ваш домен (например monitor.example.com)")
+  DOMAIN=$(normalize_domain "$DOMAIN")
   if [ -n "$DOMAIN" ]; then
+    info "Будет использован домен: ${BOLD}${DOMAIN}${NC}"
     CADDY_FILE="/etc/caddy/Caddyfile"
     # Backup existing Caddyfile
     if [ -f "$CADDY_FILE" ]; then
