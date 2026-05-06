@@ -510,6 +510,7 @@ function createStore(options = {}) {
       users,
       activeIps,
       activeIpWindows,
+      geoByIp,
       hwidTop,
       hwidDevices,
       ipHistory,
@@ -1755,7 +1756,9 @@ function createStore(options = {}) {
   // ─── Subscription Request History ────────────────────────────
   function parseSubUserAgent(ua) {
     if (!ua) return { platform: null, appVersion: null, buildId: null };
-    // Format: "Happ/4.8.3/ios/2604271944525" or "v2rayNG/1.8.x" etc
+    // Format: "Happ/4.8.3/ios/2604271944525" or "v2rayNG/1.8.x" etc.
+    // For Happ the last segment behaves like an app/client build variant, not
+    // a stable device identifier; HWID remains the source of truth for devices.
     const parts = String(ua).split('/');
     if (parts.length >= 4) {
       return {
@@ -1781,17 +1784,13 @@ function createStore(options = {}) {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
-    // Keep last known max id to avoid duplicates
-    const maxRow = db.prepare('SELECT MAX(request_at) as max_ts FROM sub_request_history').get();
-    const maxTs = maxRow && maxRow.max_ts ? maxRow.max_ts : 0;
-
     let inserted = 0;
     for (const rec of records) {
       if (!rec.userUuid) continue;
       const ts = new Date(rec.requestAt).getTime();
-      if (!Number.isFinite(ts) || ts <= maxTs) continue;
+      if (!Number.isFinite(ts)) continue;
       const parsed = parseSubUserAgent(rec.userAgent);
-      insert.run(
+      const result = insert.run(
         rec.userUuid,
         ts,
         rec.requestIp || null,
@@ -1800,7 +1799,7 @@ function createStore(options = {}) {
         parsed.appVersion,
         parsed.buildId
       );
-      inserted++;
+      inserted += result.changes || 0;
     }
     return inserted;
   });
@@ -2087,6 +2086,22 @@ function runMigrations(db) {
       description: 'Add index for app_sessions expiry',
       up: () => {
         db.exec(`CREATE INDEX IF NOT EXISTS idx_app_sessions_expires ON app_sessions(expires_at)`);
+      },
+    },
+    {
+      version: 3,
+      description: 'Deduplicate subscription request history',
+      up: () => {
+        db.exec(`
+          DELETE FROM sub_request_history
+          WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM sub_request_history
+            GROUP BY user_key, request_at, COALESCE(request_ip, ''), COALESCE(user_agent, '')
+          );
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_history_unique_request
+          ON sub_request_history(user_key, request_at, COALESCE(request_ip, ''), COALESCE(user_agent, ''));
+        `);
       },
     },
   ];

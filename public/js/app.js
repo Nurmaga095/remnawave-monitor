@@ -1931,19 +1931,22 @@ async function loadSubHistoryTab() {
       if (r.ip) ips.add(r.ip);
       if (r.version) versions.add(r.version);
     }
-    const hasMixedPlatforms = platforms.size >= 2;
+    const user = findUserByAnyKey(_currentCardUserKey);
+    const hwidLimit = user ? getUserHwidLimit(user) : 0;
+    const hasMixedPlatforms = hwidLimit > 0 ? platforms.size > hwidLimit : platforms.size >= 3;
+    const buildVariantWarnAt = Math.max(6, hwidLimit > 0 ? hwidLimit * 2 + 1 : 6);
 
     let html = '';
 
     // Alert banner
     if (hasMixedPlatforms) {
-      html += '<div class="sub-alert-banner"><span class="sub-alert-icon">\u26a0\ufe0f</span><div><b>\u041e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u044b \u0440\u0430\u0437\u043d\u044b\u0435 \u041e\u0421: ' + [...platforms].join(', ') + '</b><br>\u041f\u0440\u0438\u0437\u043d\u0430\u043a \u0448\u0430\u0440\u0438\u043d\u0433\u0430 \u043a\u043b\u044e\u0447\u0430 \u2014 \u043e\u0434\u0438\u043d \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043e\u0431\u044b\u0447\u043d\u043e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442 \u043e\u0434\u043d\u0443 \u041e\u0421</div></div>';
+      html += '<div class="sub-alert-banner"><span class="sub-alert-icon">\u26a0\ufe0f</span><div><b>\u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c \u0431\u043e\u043b\u044c\u0448\u0435 \u043b\u0438\u043c\u0438\u0442\u0430: ' + [...platforms].join(', ') + '</b><br>\u041d\u0443\u0436\u043d\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0432\u043c\u0435\u0441\u0442\u0435 \u0441 HWID \u0438 IP, \u0430 \u043d\u0435 \u043f\u043e \u043e\u0434\u043d\u043e\u043c\u0443 User-Agent</div></div>';
     }
 
     // Stats cards
     html += '<div class="sub-stats-grid">';
     html += '<div class="sub-stat-card' + (hasMixedPlatforms ? ' sub-stat-danger' : '') + '"><div class="sub-stat-val">' + platforms.size + '</div><div class="sub-stat-lbl">\u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c</div></div>';
-    html += '<div class="sub-stat-card' + (buildIds.size > 3 ? ' sub-stat-warn' : '') + '"><div class="sub-stat-val">' + buildIds.size + '</div><div class="sub-stat-lbl">\u0423\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432</div></div>';
+    html += '<div class="sub-stat-card' + (buildIds.size >= buildVariantWarnAt ? ' sub-stat-warn' : '') + '"><div class="sub-stat-val">' + buildIds.size + '</div><div class="sub-stat-lbl">\u0421\u0431\u043e\u0440\u043e\u043a UA</div></div>';
     html += '<div class="sub-stat-card"><div class="sub-stat-val">' + versions.size + '</div><div class="sub-stat-lbl">\u0412\u0435\u0440\u0441\u0438\u0439</div></div>';
     html += '<div class="sub-stat-card"><div class="sub-stat-val">' + ips.size + '</div><div class="sub-stat-lbl">IP</div></div>';
     html += '<div class="sub-stat-card"><div class="sub-stat-val">' + records.length + '</div><div class="sub-stat-lbl">\u0417\u0430\u043f\u0440\u043e\u0441\u043e\u0432</div></div>';
@@ -2516,8 +2519,8 @@ function renderInvestigationEvents(events) {
     extracted_key_suspected: '🔑 Подозрение на извлечённый ключ',
     multi_node_simultaneous: '🌐 Мульти-нода одновременно',
     schedule_pattern: '📅 Расписание по паттерну',
-    multi_platform_sub: '📱 Разные ОС в подписке',
-    multi_device_sub: '📲 Много устройств в подписке',
+    multi_platform_sub: '📱 Разные платформы в подписке',
+    multi_device_sub: '📲 Много UA-сборок в подписке',
   };
   const categoryLabels = {
     deterministic: 'крит.',
@@ -2675,8 +2678,8 @@ function userCardHtml(u) {
         extracted_key_suspected: 'Подозрение: ключ извлечён',
         multi_node_simultaneous: 'Мульти-нодовое использование',
         schedule_pattern: 'Паттерн по расписанию',
-        multi_platform_sub: 'Разные ОС в подписке',
-        multi_device_sub: 'Много устройств в подписке',
+        multi_platform_sub: 'Разные платформы в подписке',
+        multi_device_sub: 'Много UA-сборок в подписке',
       };
 
       const titleText = signalTitles[s.id] || s.reason || s.id;
@@ -2710,7 +2713,7 @@ function userCardHtml(u) {
       const typeLabels = {
         device: 'устройство', geographic: 'гео', temporal: 'время',
         network: 'сеть', traffic: 'трафик', identity: 'идентификация',
-        infrastructure: 'инфраструктура',
+        infrastructure: 'инфраструктура', subscription: 'подписка',
       };
       const typeChips = (conf.types || []).map(t => `<span class="conf-type">${esc(typeLabels[t] || t)}</span>`).join('');
       signalsHtml += `<div class="uc-section">

@@ -4,12 +4,12 @@
 // DETERMINISTIC: hwid_over_limit
 // STRONG: hwid_churn, temporal_247, multi_city, impossible_travel, velocity_extreme,
 //         fingerprint_cluster, simultaneous_distinct_networks, extracted_key_suspected,
-//         multi_node_simultaneous, multi_platform_sub
+//         multi_node_simultaneous
 // WEAK: suspicious_travel, velocity_high, fingerprint_match, isp_mix, behavior_shift,
-//       multi_device_sub, schedule_pattern
+//       multi_platform_sub, multi_device_sub, schedule_pattern
 //
 // critical (60-100) — HWID > лимит
-// high     (40-59)  — 2+ strong сигнала
+// high     (40-59)  — 2+ strong сигнала из разных типов доказательств
 // warning  (20-39)  — 1 strong или 3+ weak
 // clean    (0-19)   — нет угроз
 
@@ -166,7 +166,7 @@ function createDetector(options = {}) {
     if (scheduleSignal) signals.push(scheduleSignal);
 
     // ═══ STRONG: Multi-Platform Subscription (#11) ═══
-    const subPlatformSignal = detectMultiPlatformSub(u, state, keys, hwidLimit);
+    const subPlatformSignal = detectMultiPlatformSub(u, state, keys, hwidLimit, hwid);
     if (subPlatformSignal) signals.push(subPlatformSignal);
 
     // ═══ STRONG: Subscription Storm (#12) ═══
@@ -413,6 +413,7 @@ function createDetector(options = {}) {
   function detectSimultaneousNetworks(u, state, keys, hwidLimit) {
     const history = state.ipHistory || [];
     if (history.length < 3) return null;
+    const geoByIp = state.geoByIp || {};
 
     // Track ASN sets across recent snapshots to find persistent overlap
     let overlapCount = 0;
@@ -435,9 +436,10 @@ function createDetector(options = {}) {
           ipCount++;
           const activeEntries = (state.activeIps || {})[key] || [];
           const entry = activeEntries.find(e => e && e.ip === ip);
-          if (entry && entry.geo) {
-            if (entry.geo.asn) asns.add(String(entry.geo.asn));
-            if (entry.geo.countryCode) countries.add(entry.geo.countryCode);
+          const geo = (entry && entry.geo) || geoByIp[ip] || null;
+          if (geo) {
+            if (geo.asn) asns.add(String(geo.asn));
+            if (geo.countryCode) countries.add(geo.countryCode);
           }
         }
       }
@@ -448,13 +450,13 @@ function createDetector(options = {}) {
           maxConcurrentAsns = asns.size;
           maxConcurrentCountries = countries.size;
           maxConcurrentIps = ipCount;
-          overlapDetail = `${asns.size} ASN, ${countries.size} стран (лимит ${hwidLimit})`;
+          overlapDetail = `${asns.size} ASN, ${countries.size} стран, ${ipCount} IP (лимит ${hwidLimit})`;
         }
       }
     }
 
-    // Persistent overlap across multiple snapshots = strong evidence
-    if (overlapCount >= 3 && maxConcurrentAsns > hwidLimit) {
+    // Persistent overlap across multiple countries = strong evidence.
+    if (overlapCount >= 3 && maxConcurrentCountries >= 2 && maxConcurrentAsns > hwidLimit) {
       return {
         id: 'simultaneous_distinct_networks', category: 'strong', active: true,
         points: 25,
@@ -466,6 +468,16 @@ function createDetector(options = {}) {
         id: 'simultaneous_distinct_networks', category: 'strong', active: true,
         points: 20,
         reason: `${overlapCount} снимков с ${maxConcurrentAsns} ASN из ${maxConcurrentCountries} стран (лимит ${hwidLimit})`,
+      };
+    }
+
+    // Same-country ASN churn is common with mobile/home providers. Keep it as
+    // a weak hint only when it persists and exceeds the plan by more than one.
+    if (overlapCount >= 3 && maxConcurrentCountries <= 1 && maxConcurrentAsns >= hwidLimit + 2 && maxConcurrentIps >= hwidLimit + 2) {
+      return {
+        id: 'simultaneous_distinct_networks', category: 'weak', active: true,
+        points: 15,
+        reason: `${overlapCount} снимков с ${maxConcurrentAsns} ASN в одной стране (${maxConcurrentIps} IP, лимит ${hwidLimit})`,
       };
     }
     return null;
@@ -540,12 +552,14 @@ function createDetector(options = {}) {
   // If limit=2 and active on 4 nodes from different IPs — sharing.
   function detectMultiNodeSimultaneous(u, state, keys, hwidLimit) {
     const nodeIps = new Map(); // nodeUuid -> Set of IPs
+    const allIps = new Set();
 
     for (const key of keys) {
       const ips = (state.activeIps || {})[key];
       if (!Array.isArray(ips)) continue;
       for (const entry of ips) {
         if (!entry || !entry.nodeUuid || !entry.ip) continue;
+        allIps.add(entry.ip);
         if (!nodeIps.has(entry.nodeUuid)) nodeIps.set(entry.nodeUuid, new Set());
         nodeIps.get(entry.nodeUuid).add(entry.ip);
       }
@@ -553,6 +567,8 @@ function createDetector(options = {}) {
 
     const nodeCount = nodeIps.size;
     if (nodeCount <= hwidLimit) return null;
+    const ipCount = allIps.size;
+    if (ipCount <= hwidLimit) return null;
 
     // Collect country/ASN diversity across nodes
     const nodeCountries = new Set();
@@ -568,19 +584,19 @@ function createDetector(options = {}) {
     }
 
     // Different countries from different nodes = very strong
-    if (nodeCountries.size >= 2 && nodeCount > hwidLimit) {
+    if (nodeCountries.size >= 2 && nodeCount > hwidLimit && ipCount > hwidLimit) {
       return {
         id: 'multi_node_simultaneous', category: 'strong', active: true,
         points: 30,
-        reason: `одновременно на ${nodeCount} нодах (лимит ${hwidLimit}) из ${nodeCountries.size} стран, ${nodeAsns.size} ASN`,
+        reason: `одновременно на ${nodeCount} нодах (${ipCount} IP, лимит ${hwidLimit}) из ${nodeCountries.size} стран, ${nodeAsns.size} ASN`,
       };
     }
 
-    if (nodeCount > hwidLimit + 1) {
+    if (nodeCount > hwidLimit + 1 && ipCount > hwidLimit + 1 && nodeAsns.size > hwidLimit) {
       return {
-        id: 'multi_node_simultaneous', category: 'strong', active: true,
-        points: 20,
-        reason: `одновременно на ${nodeCount} нодах при лимите ${hwidLimit}`,
+        id: 'multi_node_simultaneous', category: 'weak', active: true,
+        points: 15,
+        reason: `одновременно на ${nodeCount} нодах (${ipCount} IP, ${nodeAsns.size} ASN) при лимите ${hwidLimit}`,
       };
     }
 
@@ -613,9 +629,12 @@ function createDetector(options = {}) {
       return { score, level: 'critical' };
     }
 
-    // Multiple strong signals → high (40-59)
-    if (strong.length >= 2) {
-      const strongPts = strong.reduce((sum, s) => sum + s.points, 0);
+    const strongEvidenceTypes = new Set(strong.map(s => getSignalEvidenceType(s.id)).filter(Boolean));
+
+    // Multiple strong signals from independent evidence types → high (40-59).
+    // Several network-only signals are correlated and should not stack to high.
+    if (strong.length >= 2 && strongEvidenceTypes.size >= 2) {
+      const strongPts = sumMaxPointsByEvidenceType(strong);
       const weakPts = weak.reduce((sum, s) => sum + Math.min(s.points, 5), 0);
       const score = Math.min(59, 40 + Math.min(strongPts, 20) + weakPts);
       return { score, level: 'high' };
@@ -623,7 +642,7 @@ function createDetector(options = {}) {
 
     // Single strong or multiple weak → warning (20-39)
     if (strong.length > 0 || weak.length >= 3) {
-      const pts = strong.reduce((sum, s) => sum + s.points, 0) + weak.reduce((sum, s) => sum + s.points, 0);
+      const pts = sumMaxPointsByEvidenceType(strong) + weak.reduce((sum, s) => sum + s.points, 0);
       const score = Math.min(39, Math.max(20, pts));
       return { score, level: score >= 20 ? 'warning' : 'clean' };
     }
@@ -635,6 +654,16 @@ function createDetector(options = {}) {
     }
 
     return { score: 0, level: 'clean' };
+  }
+
+  function sumMaxPointsByEvidenceType(signals) {
+    const byType = new Map();
+    for (const signal of signals) {
+      const type = getSignalEvidenceType(signal.id) || signal.id;
+      const points = Number(signal.points || 0);
+      byType.set(type, Math.max(byType.get(type) || 0, points));
+    }
+    return Array.from(byType.values()).reduce((sum, points) => sum + points, 0);
   }
 
   // ─── Confidence Score ──────────────────────────────────────────
@@ -651,28 +680,34 @@ function createDetector(options = {}) {
     subscription: 15,   // Multi-platform sub requests
   };
 
+  function getSignalEvidenceType(id) {
+    if (['hwid_over_limit', 'hwid_churn_high', 'hwid_churn_moderate'].includes(id))
+      return 'device';
+    if (['multi_city_extreme', 'multi_city_suspect', 'impossible_travel', 'suspicious_travel'].includes(id))
+      return 'geographic';
+    if (['temporal_247', 'behavior_shift', 'schedule_pattern'].includes(id))
+      return 'temporal';
+    if (['simultaneous_distinct_networks', 'extracted_key_suspected', 'multi_node_simultaneous'].includes(id))
+      return 'network';
+    if (['velocity_extreme', 'velocity_high'].includes(id))
+      return 'traffic';
+    if (['fingerprint_cluster', 'fingerprint_match', 'shared_ip_cluster'].includes(id))
+      return 'identity';
+    if (['isp_datacenter_heavy', 'isp_mix'].includes(id))
+      return 'infrastructure';
+    if (['multi_platform_sub', 'multi_device_sub', 'sub_storm'].includes(id))
+      return 'subscription';
+    return null;
+  }
+
   function computeConfidence(signals, context) {
     const active = signals.filter(s => s.active);
     if (active.length === 0) return { score: 0, level: 'none', types: [] };
 
     const evidenceTypes = new Set();
     for (const s of active) {
-      if (['hwid_over_limit', 'hwid_churn_high', 'hwid_churn_moderate'].includes(s.id))
-        evidenceTypes.add('device');
-      if (['multi_city_extreme', 'multi_city_suspect', 'impossible_travel', 'suspicious_travel'].includes(s.id))
-        evidenceTypes.add('geographic');
-      if (['temporal_247', 'behavior_shift', 'schedule_pattern'].includes(s.id))
-        evidenceTypes.add('temporal');
-      if (['simultaneous_distinct_networks', 'extracted_key_suspected', 'multi_node_simultaneous'].includes(s.id))
-        evidenceTypes.add('network');
-      if (['velocity_extreme', 'velocity_high'].includes(s.id))
-        evidenceTypes.add('traffic');
-      if (['fingerprint_cluster', 'fingerprint_match', 'shared_ip_cluster'].includes(s.id))
-        evidenceTypes.add('identity');
-      if (['isp_datacenter_heavy', 'isp_mix'].includes(s.id))
-        evidenceTypes.add('infrastructure');
-      if (['multi_platform_sub', 'multi_device_sub', 'sub_storm'].includes(s.id))
-        evidenceTypes.add('subscription');
+      const type = getSignalEvidenceType(s.id);
+      if (type) evidenceTypes.add(type);
     }
 
     const types = Array.from(evidenceTypes);
@@ -878,7 +913,7 @@ function createDetector(options = {}) {
   }
 
   // ─── #11 Multi-Platform Subscription Detection ──────────────
-  function detectMultiPlatformSub(u, state, keys, hwidLimit) {
+  function detectMultiPlatformSub(u, state, keys, hwidLimit, hwidCount) {
     const subHistory = state.subHistory;
     if (!subHistory) return null;
 
@@ -890,52 +925,55 @@ function createDetector(options = {}) {
     if (!hist) return null;
 
     const buildIds = Array.isArray(hist.buildIds) ? hist.buildIds.filter(Boolean) : [];
-    const subDeviceCount = buildIds.length || Number(hist.buildIdCount || 0);
-    const hasDeviceCount = Number.isFinite(subDeviceCount) && subDeviceCount > 0;
-    const deviceLimitSuffix = hasDeviceCount ? ` (${subDeviceCount} устройств, лимит ${hwidLimit})` : '';
-
-    // A paid multi-device plan may legitimately refresh the subscription from
-    // every allowed device. Subscription signals only start after the paid limit.
-    if (hasDeviceCount && subDeviceCount <= hwidLimit) return null;
-
-    // Check for different OS platforms (strongest signal)
+    const uaVariantCount = buildIds.length || Number(hist.buildIdCount || 0);
+    const hasUaVariants = Number.isFinite(uaVariantCount) && uaVariantCount > 0;
     const platforms = hist.platforms || [];
+    const platformLimitSuffix = ` (${platforms.length} платформ, лимит ${hwidLimit})`;
+    const hwidWithinLimit = hwidCount > 0 && hwidCount <= hwidLimit;
+
+    // Happ's UA suffix looks like a client build/app variant, not a stable
+    // device identity. If Remnawave HWID is present and within the paid limit,
+    // subscription UA churn must not become an abuse signal by itself.
+    if (hwidWithinLimit && platforms.length <= hwidLimit) return null;
+
+    // Check for different OS platforms.
     const MOBILE_PLATFORMS = ['ios', 'android'];
     const mobilePlatforms = platforms.filter(p => MOBILE_PLATFORMS.includes(p));
     const desktopPlatforms = platforms.filter(p => !MOBILE_PLATFORMS.includes(p) && p !== 'happ');
 
-    // iOS + Android = strong sharing signal
-    if (mobilePlatforms.length >= 2) {
+    // Multiple platform families only matter when they exceed the paid device
+    // limit. Otherwise iOS+desktop, etc. is normal for multi-device plans.
+    if (mobilePlatforms.length >= 2 && platforms.length > hwidLimit) {
       return {
-        id: 'multi_platform_sub', category: 'strong', active: true, points: 30,
-        reason: `подписка с разных ОС: ${platforms.join(', ')}${deviceLimitSuffix}`,
+        id: 'multi_platform_sub', category: 'weak', active: true, points: 15,
+        reason: `подписка с разных ОС: ${platforms.join(', ')}${platformLimitSuffix}`,
       };
     }
 
-    // Mobile + Desktop = strong sharing signal
-    if (mobilePlatforms.length >= 1 && desktopPlatforms.length >= 1) {
+    // Mobile + desktop also needs to exceed the paid platform/device limit.
+    if (mobilePlatforms.length >= 1 && desktopPlatforms.length >= 1 && platforms.length > hwidLimit) {
       return {
-        id: 'multi_platform_sub', category: 'strong', active: true, points: 25,
-        reason: `подписка с мобильной и десктопной ОС: ${platforms.join(', ')}${deviceLimitSuffix}`,
+        id: 'multi_platform_sub', category: 'weak', active: true, points: 15,
+        reason: `подписка с мобильной и десктопной ОС: ${platforms.join(', ')}${platformLimitSuffix}`,
       };
     }
 
-    if (!hasDeviceCount) return null;
+    if (!hasUaVariants || hwidWithinLimit) return null;
 
-    // Many unique buildIds on same platform = possible sharing, but only above
-    // the user's paid HWID limit.
-    const excess = subDeviceCount - hwidLimit;
+    // UA build/app variants are not devices. Keep this as a weak hint only
+    // when HWID data is missing/stale and the variants greatly exceed the plan.
+    const excess = uaVariantCount - hwidLimit;
+    if (excess >= 4) {
+      return {
+        id: 'multi_device_sub', category: 'weak', active: true, points: 15,
+        reason: `${uaVariantCount} UA-сборок обновляют подписку > лимит ${hwidLimit}${platforms.length ? ` (${platforms.join(', ')})` : ''}`,
+      };
+    }
+
     if (excess >= 2) {
       return {
-        id: 'multi_device_sub', category: 'strong', active: true, points: 20,
-        reason: `${subDeviceCount} разных устройств обновляют подписку > лимит ${hwidLimit}${platforms.length ? ` (${platforms.join(', ')})` : ''}`,
-      };
-    }
-
-    if (excess >= 1) {
-      return {
         id: 'multi_device_sub', category: 'weak', active: true, points: 10,
-        reason: `${subDeviceCount} разных устройств обновляют подписку > лимит ${hwidLimit}`,
+        reason: `${uaVariantCount} UA-сборок обновляют подписку > лимит ${hwidLimit}`,
       };
     }
 
