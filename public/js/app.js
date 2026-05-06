@@ -1918,81 +1918,128 @@ async function loadSubHistoryTab() {
       el.innerHTML = '<div class="inv-sub-empty-big"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><p>\u041d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445 \u043e \u0437\u0430\u043f\u0440\u043e\u0441\u0430\u0445 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438</p><span>\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u044f\u0432\u044f\u0442\u0441\u044f \u043f\u043e\u0441\u043b\u0435 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u0438\u0445 \u0446\u0438\u043a\u043b\u043e\u0432 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438</span></div>';
       return;
     }
-    // Analyze
+
     const platforms = new Set();
     const buildIds = new Set();
-    const userAgents = new Set();
     const ips = new Set();
     const versions = new Set();
+    const ipCounts = new Map();
     for (const r of records) {
       if (r.platform) platforms.add(r.platform);
       if (r.buildId) buildIds.add(r.buildId);
-      if (r.ua) userAgents.add(r.ua);
-      if (r.ip) ips.add(r.ip);
+      if (r.ip) {
+        ips.add(r.ip);
+        ipCounts.set(r.ip, (ipCounts.get(r.ip) || 0) + 1);
+      }
       if (r.version) versions.add(r.version);
     }
+
     const user = findUserByAnyKey(_currentCardUserKey);
     const hwidLimit = user ? getUserHwidLimit(user) : 0;
+    const hwidCount = user ? hwidCountForUser(user) : 0;
     const hasMixedPlatforms = hwidLimit > 0 ? platforms.size > hwidLimit : platforms.size >= 3;
     const buildVariantWarnAt = Math.max(6, hwidLimit > 0 ? hwidLimit * 2 + 1 : 6);
+    const latest = records[0];
+    const latestDate = latest && latest.ts ? fmtDateTime(latest.ts) : '—';
+    const platformList = Array.from(platforms).map(platformName).join(', ') || 'не определено';
+    const versionList = Array.from(versions).map(v => `Happ ${v}`).join(', ') || 'не определено';
+    const topIps = Array.from(ipCounts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 4);
+
+    const summaryNotes = [];
+    if (platforms.size === 1) summaryNotes.push(`Все запросы пришли с ${platformList}.`);
+    else summaryNotes.push(`Подписку обновляли с платформ: ${platformList}.`);
+    if (versions.size === 1) summaryNotes.push(`Версия приложения не менялась: ${versionList}.`);
+    else summaryNotes.push(`Версии приложения: ${versionList}.`);
+    if (ips.size === 1) summaryNotes.push('IP не менялся в последних запросах.');
+    else summaryNotes.push(`IP менялись: ${ips.size} ${pluralRu(ips.size, 'адрес', 'адреса', 'адресов')}.`);
+    if (buildIds.size > 0) summaryNotes.push(`Сборок клиента: ${buildIds.size}. Это версия приложения/клиента, не отдельное устройство.`);
 
     let html = '';
+    html += `<div class="sub-readable">
+      <div class="sub-hero ${hasMixedPlatforms ? 'sub-hero-warn' : ''}">
+        <div>
+          <div class="sub-hero-title">${hasMixedPlatforms ? 'Нужно посмотреть внимательнее' : 'Выглядит нормально'}</div>
+          <div class="sub-hero-text">${hasMixedPlatforms
+            ? `Платформ больше лимита тарифа: ${esc(platformList)}. Проверяй это вместе с HWID и IP.`
+            : `Последние ${records.length} ${pluralRu(records.length, 'запрос', 'запроса', 'запросов')} не показывают превышение по платформам.`}</div>
+        </div>
+        <div class="sub-hero-pill">${hwidLimit ? `${hwidCount}/${hwidLimit} HWID` : `${hwidCount} HWID`}</div>
+      </div>
 
-    // Alert banner
-    if (hasMixedPlatforms) {
-      html += '<div class="sub-alert-banner"><span class="sub-alert-icon">\u26a0\ufe0f</span><div><b>\u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c \u0431\u043e\u043b\u044c\u0448\u0435 \u043b\u0438\u043c\u0438\u0442\u0430: ' + [...platforms].join(', ') + '</b><br>\u041d\u0443\u0436\u043d\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0432\u043c\u0435\u0441\u0442\u0435 \u0441 HWID \u0438 IP, \u0430 \u043d\u0435 \u043f\u043e \u043e\u0434\u043d\u043e\u043c\u0443 User-Agent</div></div>';
-    }
+      <div class="sub-kpi-grid">
+        ${subKpiHtml('Платформа', platformList, `${platforms.size} ${pluralRu(platforms.size, 'тип', 'типа', 'типов')}`, hasMixedPlatforms ? 'warn' : '')}
+        ${subKpiHtml('Приложение', versionList, `${versions.size} ${pluralRu(versions.size, 'версия', 'версии', 'версий')}`)}
+        ${subKpiHtml('IP-адреса', String(ips.size), ips.size === 1 ? 'один адрес' : 'смена сетей')}
+        ${subKpiHtml('Сборки клиента', String(buildIds.size), 'не отдельные устройства', buildIds.size >= buildVariantWarnAt ? 'warn' : '')}
+        ${subKpiHtml('Запросы', String(records.length), `последний: ${latestDate}`)}
+      </div>
 
-    // Stats cards
-    html += '<div class="sub-stats-grid">';
-    html += '<div class="sub-stat-card' + (hasMixedPlatforms ? ' sub-stat-danger' : '') + '"><div class="sub-stat-val">' + platforms.size + '</div><div class="sub-stat-lbl">\u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c</div></div>';
-    html += '<div class="sub-stat-card' + (buildIds.size >= buildVariantWarnAt ? ' sub-stat-warn' : '') + '"><div class="sub-stat-val">' + buildIds.size + '</div><div class="sub-stat-lbl">\u0421\u0431\u043e\u0440\u043e\u043a UA</div></div>';
-    html += '<div class="sub-stat-card"><div class="sub-stat-val">' + versions.size + '</div><div class="sub-stat-lbl">\u0412\u0435\u0440\u0441\u0438\u0439</div></div>';
-    html += '<div class="sub-stat-card"><div class="sub-stat-val">' + ips.size + '</div><div class="sub-stat-lbl">IP</div></div>';
-    html += '<div class="sub-stat-card"><div class="sub-stat-val">' + records.length + '</div><div class="sub-stat-lbl">\u0417\u0430\u043f\u0440\u043e\u0441\u043e\u0432</div></div>';
-    html += '</div>';
+      <div class="sub-readable-grid">
+        <div class="sub-insight-card">
+          <div class="sub-readable-title">Что видно простыми словами</div>
+          <div class="sub-insight-list">${summaryNotes.map(note => `<div class="sub-insight-row">${IC.check}<span>${esc(note)}</span></div>`).join('')}</div>
+        </div>
+        <div class="sub-insight-card">
+          <div class="sub-readable-title">Самые частые IP</div>
+          <div class="sub-top-ip-list">${topIps.map(([ip, count]) => `<div class="sub-top-ip"><code>${esc(ip)}</code><span>${count} ${pluralRu(count, 'запрос', 'запроса', 'запросов')}</span></div>`).join('') || '<div class="sub-muted">IP не записаны</div>'}</div>
+        </div>
+      </div>
 
-    // Platform badges
-    html += '<div class="sub-plat-section"><div class="sub-section-title">\u041f\u043b\u0430\u0442\u0444\u043e\u0440\u043c\u044b</div><div class="sub-plat-badges">';
-    for (const p of platforms) {
-      const icon = p === 'ios' ? '\ud83c\udf4e' : p === 'android' ? '\ud83e\udd16' : p === 'windows' ? '\ud83d\udda5\ufe0f' : p === 'macos' ? '\ud83d\udcbb' : '\ud83d\udcf1';
-      html += '<span class="sub-plat-badge">' + icon + ' ' + esc(p) + '</span>';
-    }
-    html += '</div></div>';
-
-    // Versions
-    if (versions.size > 0) {
-      html += '<div class="sub-plat-section"><div class="sub-section-title">\u0412\u0435\u0440\u0441\u0438\u0438 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u044f</div><div class="sub-plat-badges">';
-      for (const v of versions) {
-        html += '<span class="sub-ver-badge">v' + esc(v) + '</span>';
-      }
-      html += '</div></div>';
-    }
-
-    // Records table
-    html += '<div class="sub-section-title" style="margin-top:16px">\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b</div>';
-    html += '<div class="sub-records-table">';
-    html += '<div class="sub-rec-header"><span>\u0412\u0440\u0435\u043c\u044f</span><span>\u041e\u0421</span><span>IP</span><span>User-Agent</span></div>';
-    for (const r of records.slice(0, 20)) {
-      const date = new Date(r.ts);
-      const timeStr = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      const dateStr = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
-      const platIcon = r.platform === 'ios' ? '\ud83c\udf4e' : r.platform === 'android' ? '\ud83e\udd16' : '\ud83d\udcf1';
-      html += '<div class="sub-rec-row">';
-      html += '<span class="sub-rec-time">' + dateStr + ' ' + timeStr + '</span>';
-      html += '<span class="sub-rec-plat">' + platIcon + ' ' + esc(r.platform || '?') + '</span>';
-      html += '<span class="sub-rec-ip">' + esc(r.ip || '') + '</span>';
-      html += '<span class="sub-rec-ua" title="' + escAttr(r.ua || '') + '">' + esc((r.ua || '').substring(0, 45)) + '</span>';
-      html += '</div>';
-    }
-    if (records.length > 20) {
-      html += '<div class="sub-rec-more">\u0438 \u0435\u0449\u0451 ' + (records.length - 20) + ' \u0437\u0430\u043f\u0438\u0441\u0435\u0439\u2026</div>';
-    }
-    html += '</div>';
+      <div class="sub-readable-title">Последние запросы</div>
+      <div class="sub-request-list">
+        ${records.slice(0, 12).map(r => subRequestRowHtml(r)).join('')}
+        ${records.length > 12 ? `<div class="sub-rec-more">ещё ${records.length - 12} ${pluralRu(records.length - 12, 'запись', 'записи', 'записей')} скрыто</div>` : ''}
+      </div>
+    </div>`;
     el.innerHTML = html;
   } catch (e) {
     el.innerHTML = '<div class="inv-sub-empty">\u041e\u0448\u0438\u0431\u043a\u0430: ' + esc(e.message) + '</div>';
   }
+}
+
+function subKpiHtml(label, value, hint, mode = '') {
+  return `<div class="sub-kpi ${mode ? `sub-kpi-${mode}` : ''}">
+    <div class="sub-kpi-label">${esc(label)}</div>
+    <div class="sub-kpi-value">${esc(value)}</div>
+    <div class="sub-kpi-hint">${esc(hint || '')}</div>
+  </div>`;
+}
+
+function subRequestRowHtml(r) {
+  const date = r.ts ? new Date(r.ts) : null;
+  const time = date ? date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—';
+  const day = date ? date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) : '';
+  const build = r.buildId ? shortToken(r.buildId) : '';
+  const client = [r.version ? `Happ ${r.version}` : 'Happ', platformName(r.platform)].filter(Boolean).join(' · ');
+  return `<div class="sub-request-row">
+    <div class="sub-request-time"><b>${esc(time)}</b><span>${esc(day)}</span></div>
+    <div class="sub-request-main">
+      <div class="sub-request-client">${esc(client)}</div>
+      <div class="sub-request-meta">${build ? `Сборка клиента ${esc(build)}` : 'Сборка клиента не указана'}</div>
+    </div>
+    <code class="sub-request-ip">${esc(r.ip || 'IP не записан')}</code>
+  </div>`;
+}
+
+function platformName(platform) {
+  const value = String(platform || '').toLowerCase();
+  if (value === 'ios') return 'iOS';
+  if (value === 'android') return 'Android';
+  if (value === 'windows') return 'Windows';
+  if (value === 'macos' || value === 'darwin') return 'macOS';
+  if (value === 'linux') return 'Linux';
+  return platform ? String(platform) : '';
+}
+
+function pluralRu(value, one, few, many) {
+  const n = Math.abs(Number(value || 0));
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
 }
 
 function closeUserModal(event) {
@@ -2373,7 +2420,7 @@ function renderHistoryTimeline(data, userKey, currentHours) {
   if (!data.timeline || data.timeline.length === 0) {
     return `<div class="htl-empty">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.25"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <p>Нет IP-снимков за ${data.hours || currentHours}ч</p>
+      <p>Нет проверок IP за ${data.hours || currentHours}ч</p>
       ${data.hwidHistory && data.hwidHistory.length > 0 ? `<span class="htl-empty-sub">HWID за всё время: ${data.hwidHistory.length} устройств</span>` : ''}
     </div>`;
   }
@@ -2387,47 +2434,112 @@ function renderHistoryTimeline(data, userKey, currentHours) {
     `<button class="htl-period ${p.h === currentHours ? 'active' : ''}" onclick="loadUserHistory('${escAttr(userKey)}', ${p.h})">${p.label}</button>`
   ).join('')}</div>`;
 
-  // Summary stats — improved visual cards
-  const summaryHtml = `<div class="htl-summary">
-    <div class="htl-stat-card"><div class="htl-stat-num">${data.uniqueIps}</div><div class="htl-stat-label">Уник. IP</div></div>
-    <div class="htl-stat-card"><div class="htl-stat-num">${data.timeline.length}</div><div class="htl-stat-label">Окна</div></div>
-    <div class="htl-stat-card"><div class="htl-stat-num">${data.totalSnapshots}</div><div class="htl-stat-label">Записей</div></div>
-    <div class="htl-stat-card"><div class="htl-stat-num">${(data.hwidHistory || []).length}</div><div class="htl-stat-label">HWID</div></div>
+  const timeline = data.timeline || [];
+  const groups = groupHistoryTimeline(timeline);
+  const visibleGroups = groups.slice(-24);
+  const maxIps = Math.max(1, ...groups.map(g => g.ips.length));
+  const peak = groups.reduce((best, group) => group.ips.length > best.ips.length ? group : best, groups[0]);
+  const peakText = peak ? `${peak.ips.length} ${pluralRu(peak.ips.length, 'IP', 'IP', 'IP')} одновременно` : 'нет данных';
+  const summaryText = `За ${data.hours || currentHours}ч: ${data.uniqueIps} ${pluralRu(data.uniqueIps, 'уникальный IP', 'уникальных IP', 'уникальных IP')}, ${groups.length} ${pluralRu(groups.length, 'период', 'периода', 'периодов')}.`;
+
+  const summaryHtml = `<div class="htl-readable">
+    <div class="htl-readable-head">
+      <div>
+        <div class="htl-readable-title">История подключений</div>
+        <div class="htl-readable-sub">${esc(summaryText)} Пик: ${esc(peakText)}.</div>
+      </div>
+      <div class="htl-readable-window">${data.hours || currentHours}ч</div>
+    </div>
+    <div class="htl-kpi-grid">
+      ${historyKpiHtml(data.uniqueIps, 'IP за период', 'сколько разных адресов было видно')}
+      ${historyKpiHtml(data.timeline.length, 'Проверок', 'сколько раз монитор видел состояние')}
+      ${historyKpiHtml(data.totalSnapshots, 'Всего IP', 'адреса с повторами в истории')}
+      ${historyKpiHtml((data.hwidHistory || []).length, 'HWID в истории', 'устройства за период хранения')}
+    </div>
   </div>`;
 
-  // Timeline — improved cards
-  const maxIps = Math.max(1, ...data.timeline.map(t => t.ips.length));
-  const timelineHtml = data.timeline.slice(-50).map((entry, idx) => {
-    const time = new Date(entry.ts);
-    const timeStr = time.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    const dateStr = time.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
-    const barPct = (entry.ips.length / maxIps * 100).toFixed(0);
-    const severity = entry.ips.length > 5 ? 'danger' : entry.ips.length > 3 ? 'warn' : 'normal';
-    const barColor = severity === 'danger' ? 'var(--red)' : severity === 'warn' ? 'var(--yellow)' : 'var(--accent)';
+  const timelineHtml = visibleGroups.map(group => historyGroupHtml(group, maxIps)).join('');
+  const hiddenCount = Math.max(0, groups.length - visibleGroups.length);
+  const hiddenHtml = hiddenCount > 0
+    ? `<div class="htl-hidden-note">Показаны последние ${visibleGroups.length} ${pluralRu(visibleGroups.length, 'период', 'периода', 'периодов')}, ещё ${hiddenCount} выше по истории.</div>`
+    : '';
 
-    const ipsPreview = entry.ips.slice(0, 5).map(i => {
-      const geo = i.geo ? (i.geo.countryCode || '') : '';
-      const city = i.geo ? (i.geo.city || '') : '';
-      return `<span class="htl-ip2">${esc(i.ip)}${geo ? `<span class="htl-ip2-geo">${esc(geo)}${city ? ' ' + esc(city) : ''}</span>` : ''}</span>`;
-    }).join('');
-    const more = entry.ips.length > 5 ? `<span class="htl-ip2-more">+${entry.ips.length - 5}</span>` : '';
+  return `${periodHtml}${summaryHtml}<div class="htl-group-list">${timelineHtml}${hiddenHtml}</div>`;
+}
 
-    return `<div class="htl-entry htl-entry-${severity}">
-      <div class="htl-entry-header">
-        <div class="htl-entry-time">
-          <span class="htl-entry-clock">${timeStr}</span>
-          <span class="htl-entry-date">${dateStr}</span>
-        </div>
-        <div class="htl-entry-bar-wrap">
-          <div class="htl-entry-bar"><div class="htl-entry-bar-fill" style="width:${barPct}%;background:${barColor}"></div></div>
-        </div>
-        <div class="htl-entry-count" style="color:${barColor}">${entry.ips.length} <small>IP</small></div>
-      </div>
-      <div class="htl-entry-ips">${ipsPreview}${more}</div>
-    </div>`;
+function historyKpiHtml(value, label, hint) {
+  return `<div class="htl-kpi">
+    <div class="htl-kpi-value">${esc(value)}</div>
+    <div class="htl-kpi-label">${esc(label)}</div>
+    <div class="htl-kpi-hint">${esc(hint)}</div>
+  </div>`;
+}
+
+function groupHistoryTimeline(timeline) {
+  const groups = [];
+  for (const entry of timeline || []) {
+    const key = historyIpKey(entry);
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) {
+      last.endTs = entry.ts;
+      last.snapshots += 1;
+      last.ips = entry.ips || [];
+    } else {
+      groups.push({
+        key,
+        startTs: entry.ts,
+        endTs: entry.ts,
+        snapshots: 1,
+        ips: entry.ips || [],
+      });
+    }
+  }
+  return groups;
+}
+
+function historyIpKey(entry) {
+  return (entry.ips || []).map(item => item.ip).filter(Boolean).sort().join('|') || 'empty';
+}
+
+function historyGroupHtml(group, maxIps) {
+  const count = group.ips.length;
+  const severity = count > 5 ? 'danger' : count > 3 ? 'warn' : 'normal';
+  const barColor = severity === 'danger' ? 'var(--red)' : severity === 'warn' ? 'var(--yellow)' : 'var(--accent)';
+  const barPct = Math.max(6, Math.round(count / Math.max(1, maxIps) * 100));
+  const ipsHtml = group.ips.slice(0, 6).map(item => {
+    const geo = ipGeoLabel(item.geo);
+    return `<span class="htl-ip-pill"><code>${esc(item.ip)}</code>${geo ? `<span>${esc(geo)}</span>` : ''}</span>`;
   }).join('');
+  const more = count > 6 ? `<span class="htl-ip-more">+${count - 6} ещё</span>` : '';
+  return `<div class="htl-group htl-group-${severity}">
+    <div class="htl-group-main">
+      <div class="htl-group-time">
+        <b>${esc(historyRangeLabel(group.startTs, group.endTs))}</b>
+        <span>${esc(groupDurationLabel(group))}</span>
+      </div>
+      <div class="htl-group-meter">
+        <div class="htl-group-bar"><div style="width:${barPct}%;background:${barColor}"></div></div>
+        <span>${count} ${pluralRu(count, 'IP', 'IP', 'IP')}</span>
+      </div>
+    </div>
+    <div class="htl-group-ips">${ipsHtml}${more}</div>
+  </div>`;
+}
 
-  return `${periodHtml}${summaryHtml}<div class="htl-timeline2">${timelineHtml}</div>`;
+function historyRangeLabel(startTs, endTs) {
+  const start = new Date(startTs);
+  const end = new Date(endTs);
+  const startTime = start.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const endTime = end.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const date = end.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  return startTime === endTime ? `${date} ${startTime}` : `${date} ${startTime}-${endTime}`;
+}
+
+function groupDurationLabel(group) {
+  if (group.snapshots <= 1) return 'одна проверка';
+  const duration = Math.max(0, Number(group.endTs || 0) - Number(group.startTs || 0));
+  const label = duration > 0 ? formatDuration(duration) : `${group.snapshots} ${pluralRu(group.snapshots, 'проверка', 'проверки', 'проверок')}`;
+  return `${label} · ${group.snapshots} ${pluralRu(group.snapshots, 'проверка', 'проверки', 'проверок')}`;
 }
 
 // ─── Investigation Tab ───────────────────────────────────────────
@@ -2520,7 +2632,7 @@ function renderInvestigationEvents(events) {
     multi_node_simultaneous: '🌐 Мульти-нода одновременно',
     schedule_pattern: '📅 Расписание по паттерну',
     multi_platform_sub: '📱 Разные платформы в подписке',
-    multi_device_sub: '📲 Много UA-сборок в подписке',
+    multi_device_sub: '📲 Много сборок клиента в подписке',
   };
   const categoryLabels = {
     deterministic: 'крит.',
@@ -2548,7 +2660,9 @@ function renderInvestigationEvents(events) {
     }
   }
 
-  const rows = grouped.slice(0, 20).map((event) => {
+  const visibleEvents = grouped.slice(0, 8);
+  const hiddenEvents = Math.max(0, grouped.length - visibleEvents.length);
+  const rows = visibleEvents.map((event) => {
     const date = new Date(event.lastTs);
     const dateStr = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
     const timeStr = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -2570,27 +2684,22 @@ function renderInvestigationEvents(events) {
     let signalHtml = '';
     const signals = meta.signals || (meta.detection && meta.detection.signals) || [];
     if (signals.length > 0) {
-      signalHtml = `<div class="inv-signals">${signals.map(s => {
+      signalHtml = `<div class="inv-signal-chips">${signals.slice(0, 4).map(s => {
         const name = signalNames[s.id] || s.id;
         const cat = categoryLabels[s.category] || s.category;
         const catCls = categoryCls[s.category] || 'inv-sig-info';
-        return `<div class="inv-signal-row">
-          <span class="inv-signal-cat ${catCls}">${esc(cat)}</span>
-          <span class="inv-signal-name">${esc(name)}</span>
-          <span class="inv-signal-reason">${esc(s.reason || '')}</span>
-          <span class="inv-signal-pts">+${s.points || 0}</span>
-        </div>`;
-      }).join('')}</div>`;
+        return `<span class="inv-signal-chip ${catCls}" title="${escAttr(s.reason || '')}">${esc(cat)} · ${esc(name)}</span>`;
+      }).join('')}${signals.length > 4 ? `<span class="inv-signal-chip inv-sig-info">+${signals.length - 4} ещё</span>` : ''}</div>`;
     }
 
     // Enhanced detail for risk_updated events
     let detailHtml = '';
     if (event.detail) {
-      detailHtml = `<div class="inv-event-detail">${esc(event.detail)}</div>`;
+      detailHtml = `<div class="inv-event-detail">${esc(humanEventDetail(event.detail))}</div>`;
     }
     if (meta.riskLevel && meta.riskScore !== undefined && !event.detail) {
       const lvlColor = meta.riskLevel === 'critical' ? 'var(--red)' : meta.riskLevel === 'high' ? '#f97316' : meta.riskLevel === 'warning' ? 'var(--yellow)' : 'var(--green)';
-      detailHtml = `<div class="inv-event-detail">${IC.dot(lvlColor)} ${esc(meta.riskLevel)} · ${meta.riskScore}/100${meta.previousScore !== undefined ? ` (было: ${meta.previousScore})` : ''}</div>`;
+      detailHtml = `<div class="inv-event-detail">${IC.dot(lvlColor)} ${esc(riskLabelRu(meta.riskLevel))} · ${meta.riskScore}/100${meta.previousScore !== undefined ? ` (было: ${meta.previousScore})` : ''}</div>`;
     }
 
     return `<div class="inv-event inv-event-${cls}">
@@ -2607,9 +2716,30 @@ function renderInvestigationEvents(events) {
     </div>`;
   }).join('');
   return `<div class="inv-section">
-    <div class="inv-section-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg> Лента событий</div>
-    <div class="inv-events-list">${rows}</div>
+    <div class="inv-section-title inv-section-title-split">
+      <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg> Важные события</span>
+      <small>последние ${visibleEvents.length}</small>
+    </div>
+    <div class="inv-events-list inv-events-list-compact">${rows}${hiddenEvents ? `<div class="inv-more-note">ещё ${hiddenEvents} ${pluralRu(hiddenEvents, 'событие', 'события', 'событий')} скрыто</div>` : ''}</div>
   </div>`;
+}
+
+function riskLabelRu(level) {
+  const value = String(level || '').toLowerCase();
+  if (value === 'critical') return 'Критично';
+  if (value === 'high') return 'Высокий риск';
+  if (value === 'warning') return 'Внимание';
+  if (value === 'clean') return 'Чисто';
+  return level || '';
+}
+
+function humanEventDetail(detail) {
+  return String(detail || '')
+    .replace(/\bcritical\b/g, 'Критично')
+    .replace(/\bhigh\b/g, 'Высокий риск')
+    .replace(/\bwarning\b/g, 'Внимание')
+    .replace(/\bclean\b/g, 'Чисто')
+    .replace(/\s*·\s*/g, ' · ');
 }
 
 function userCardHtml(u) {
@@ -2679,7 +2809,7 @@ function userCardHtml(u) {
         multi_node_simultaneous: 'Мульти-нодовое использование',
         schedule_pattern: 'Паттерн по расписанию',
         multi_platform_sub: 'Разные платформы в подписке',
-        multi_device_sub: 'Много UA-сборок в подписке',
+        multi_device_sub: 'Много сборок клиента в подписке',
       };
 
       const titleText = signalTitles[s.id] || s.reason || s.id;
@@ -2910,7 +3040,7 @@ function userCardHtml(u) {
 
         <!-- TAB: Подписки -->
         <div class="uc-tab-panel" data-uctab-panel="subscriptions">
-          <div id="user-sub-history-tab" style="padding:18px">
+          <div id="user-sub-history-tab" class="sub-history-panel">
             <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка подписок…</p></div>
           </div>
         </div>
