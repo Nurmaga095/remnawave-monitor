@@ -166,7 +166,7 @@ function createDetector(options = {}) {
     if (scheduleSignal) signals.push(scheduleSignal);
 
     // ═══ STRONG: Multi-Platform Subscription (#11) ═══
-    const subPlatformSignal = detectMultiPlatformSub(u, state, keys);
+    const subPlatformSignal = detectMultiPlatformSub(u, state, keys, hwidLimit);
     if (subPlatformSignal) signals.push(subPlatformSignal);
 
     // ═══ STRONG: Subscription Storm (#12) ═══
@@ -750,6 +750,11 @@ function createDetector(options = {}) {
         id: 'low_hwid',
         text: `Только ${hwidCount} устройство из ${hwidLimit} — нет признаков мультидевайса`,
       });
+    } else if (hwidCount > 1 && hwidCount <= hwidLimit) {
+      factors.push({
+        id: 'hwid_within_limit',
+        text: `${hwidCount} устройств из ${hwidLimit} — в пределах лимита тарифа`,
+      });
     }
 
     // Low traffic might indicate reconnect, not real usage
@@ -873,7 +878,7 @@ function createDetector(options = {}) {
   }
 
   // ─── #11 Multi-Platform Subscription Detection ──────────────
-  function detectMultiPlatformSub(u, state, keys) {
+  function detectMultiPlatformSub(u, state, keys, hwidLimit) {
     const subHistory = state.subHistory;
     if (!subHistory) return null;
 
@@ -883,6 +888,15 @@ function createDetector(options = {}) {
       if (subHistory[key]) { hist = subHistory[key]; break; }
     }
     if (!hist) return null;
+
+    const buildIds = Array.isArray(hist.buildIds) ? hist.buildIds.filter(Boolean) : [];
+    const subDeviceCount = buildIds.length || Number(hist.buildIdCount || 0);
+    const hasDeviceCount = Number.isFinite(subDeviceCount) && subDeviceCount > 0;
+    const deviceLimitSuffix = hasDeviceCount ? ` (${subDeviceCount} устройств, лимит ${hwidLimit})` : '';
+
+    // A paid multi-device plan may legitimately refresh the subscription from
+    // every allowed device. Subscription signals only start after the paid limit.
+    if (hasDeviceCount && subDeviceCount <= hwidLimit) return null;
 
     // Check for different OS platforms (strongest signal)
     const platforms = hist.platforms || [];
@@ -894,7 +908,7 @@ function createDetector(options = {}) {
     if (mobilePlatforms.length >= 2) {
       return {
         id: 'multi_platform_sub', category: 'strong', active: true, points: 30,
-        reason: `подписка с разных ОС: ${platforms.join(', ')} (${hist.buildIdCount} устройств)`,
+        reason: `подписка с разных ОС: ${platforms.join(', ')}${deviceLimitSuffix}`,
       };
     }
 
@@ -902,23 +916,26 @@ function createDetector(options = {}) {
     if (mobilePlatforms.length >= 1 && desktopPlatforms.length >= 1) {
       return {
         id: 'multi_platform_sub', category: 'strong', active: true, points: 25,
-        reason: `подписка с мобильной и десктопной ОС: ${platforms.join(', ')}`,
+        reason: `подписка с мобильной и десктопной ОС: ${platforms.join(', ')}${deviceLimitSuffix}`,
       };
     }
 
-    // Many unique buildIds on same platform = possible sharing
-    const buildIds = hist.buildIds || [];
-    if (buildIds.length >= 4) {
+    if (!hasDeviceCount) return null;
+
+    // Many unique buildIds on same platform = possible sharing, but only above
+    // the user's paid HWID limit.
+    const excess = subDeviceCount - hwidLimit;
+    if (excess >= 2) {
       return {
         id: 'multi_device_sub', category: 'strong', active: true, points: 20,
-        reason: `${buildIds.length} разных устройств обновляют подписку (${platforms.join(', ')})`,
+        reason: `${subDeviceCount} разных устройств обновляют подписку > лимит ${hwidLimit}${platforms.length ? ` (${platforms.join(', ')})` : ''}`,
       };
     }
 
-    if (buildIds.length >= 3) {
+    if (excess >= 1) {
       return {
         id: 'multi_device_sub', category: 'weak', active: true, points: 10,
-        reason: `${buildIds.length} разных устройств обновляют подписку`,
+        reason: `${subDeviceCount} разных устройств обновляют подписку > лимит ${hwidLimit}`,
       };
     }
 
