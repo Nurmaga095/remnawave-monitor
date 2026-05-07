@@ -74,6 +74,11 @@
 - Автоматические Telegram-уведомления при срабатывании
 - Кулдауны и включение/отключение для каждого правила
 
+### 🤖 ИИ-анализ
+- Вкладка настроек ИИ с поддержкой OpenAI, OpenRouter, Anthropic, Gemini и OpenAI-compatible endpoint
+- Объяснимый анализ подозрительных пользователей поверх существующих сигналов детекции
+- В запросы отправляются агрегированные признаки, без сырых HWID и IP
+
 ### 🎨 Интерфейс
 - Тёмная тема с эффектом glassmorphism
 - Поддержка светлой темы
@@ -137,6 +142,13 @@ REMNAWAVE_API_TOKEN=ваш-api-токен-remnawave
 
 # Опционально: Telegram-предупреждения
 TELEGRAM_BOT_TOKEN=токен-вашего-бота
+
+# Опционально: ИИ-анализ
+AI_ENABLED=false
+AI_PROVIDER=openai
+AI_API_KEY=ключ-провайдера
+AI_MODEL=gpt-4o-mini
+AI_BASE_URL=https://api.openai.com/v1
 ```
 
 ### Запуск
@@ -246,6 +258,21 @@ sudo journalctl -u remnawave-monitor -n 30 --no-pager
 | `REMNAWAVE_API_TOKEN` | API-токен Remnawave | — |
 | `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота для предупреждений | — |
 
+### ИИ-анализ
+
+Эти параметры можно задать в `.env` или через вкладку **Настройки → Настройка ИИ** в панели.
+
+| Переменная | Описание | По умолчанию |
+|---|---|---|
+| `AI_ENABLED` | Включить ИИ-анализ | `false` |
+| `AI_PROVIDER` | `openai`, `openrouter`, `anthropic`, `google`, `custom` | `openai` |
+| `AI_API_KEY` | API-ключ выбранного провайдера | — |
+| `AI_MODEL` | Название модели | `gpt-4o-mini` |
+| `AI_BASE_URL` | Base URL API | `https://api.openai.com/v1` |
+| `AI_TEMPERATURE` | Температура ответа | `0.2` |
+| `AI_MAX_TOKENS` | Максимум токенов ответа | `900` |
+| `AI_TIMEOUT_SECONDS` | Таймаут запроса | `30` |
+
 ### Синхронизация и хранение
 
 | Переменная | Описание | По умолчанию |
@@ -311,6 +338,7 @@ remnawave-monitor/
 │   ├── sync-store.js        # SQLite data layer
 │   ├── detect.js            # Движок детекции
 │   ├── rules.js             # Движок правил
+│   ├── ai-service.js        # Провайдеры и запросы ИИ-анализа
 │   └── ip-check.js          # Утилиты анализа IP
 ├── public/
 │   ├── index.html           # SPA-оболочка

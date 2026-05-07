@@ -125,6 +125,8 @@ let state = {
   countdownTimer: null,
   loading: false,
   sync: null,
+  aiSettings: null,
+  aiProviders: [],
   stateVersion: 0,
   lastStateETag: null,
   bulkSelected: new Set(),
@@ -506,6 +508,7 @@ function applyCachedState(snapshot) {
     incidentStats: snapshot.incidentStats || {},
     relations: snapshot.relations || null,
     nodeMap: snapshot.nodeMap || {},
+    subHistory: snapshot.subHistory || {},
   };
   state.ipHistory = (Array.isArray(snapshot.ipHistory) ? snapshot.ipHistory : []).map((snap) => {
     const ips = {};
@@ -2928,6 +2931,10 @@ function userCardHtml(u) {
         </div>
       </div>
       <div class="uc-header-right">
+        <button class="uc-ai-check-btn" onclick="checkClientWithAi('${escAttr(key)}')" title="Проверить клиента по всем данным">
+          ${IC._s('<path d="M12 3l1.7 5.2L19 10l-4.2 3.4L16.2 19 12 16.1 7.8 19l1.4-5.6L5 10l5.3-1.8L12 3z"/>', 15)}
+          <span>Проверить клиента</span>
+        </button>
         <button class="modal-close" onclick="closeUserModal()" title="Закрыть">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -3027,6 +3034,7 @@ function userCardHtml(u) {
         <div class="uc-tab-panel" data-uctab-panel="signals">
           <div style="padding:18px;display:flex;flex-direction:column;gap:14px">
             ${signalsHtml || '<div class="empty-state sm"><p>Сигналов детекции нет</p></div>'}
+            ${aiUserPanelHtml(key)}
           </div>
         </div>
 
@@ -4248,10 +4256,12 @@ function showTab(name) {
     incidents: 'Центр инцидентов',
     relations: 'Граф связей',
     rules: 'Движок правил',
+    settings: 'Настройки',
   };
   document.getElementById('page-title').textContent = titles[name] || name;
   closeSidebarIfMobile();
   if (name === 'rules') loadRulesTab();
+  if (name === 'settings') loadAiSettingsTab();
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -4730,6 +4740,368 @@ async function saveRule(ruleId) {
     toast(ruleId ? 'Правило обновлено' : 'Правило создано');
     loadRulesTab();
   } catch (e) { toast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── Settings / AI ────────────────────────────────────────────────
+
+const AI_RISK_LABELS = {
+  clean: 'Чисто',
+  watch: 'Наблюдать',
+  medium: 'Средний риск',
+  high: 'Высокий риск',
+  critical: 'Критично',
+};
+
+const AI_ACTION_LABELS = {
+  observe: 'Наблюдать',
+  manual_review: 'Ручная проверка',
+  warn_user: 'Предупредить пользователя',
+  restrict_after_review: 'Ограничить после проверки',
+};
+
+function showSettingsSection(section) {
+  document.querySelectorAll('.settings-section').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.settings-menu-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('settings-section-' + section)?.classList.add('active');
+  document.querySelector(`[data-settings-section="${section}"]`)?.classList.add('active');
+  if (section === 'ai') loadAiSettingsTab();
+}
+
+async function loadAiSettingsTab(force = false) {
+  const root = document.getElementById('ai-settings-root');
+  if (!root) return;
+  if (state.aiSettings && state.aiProviders.length > 0 && !force) {
+    renderAiSettings();
+    return;
+  }
+
+  root.innerHTML = '<div class="loading-state" style="padding:32px"><div class="spinner-large"></div><p>Загрузка настроек ИИ...</p></div>';
+  try {
+    const res = await fetch('/api/ai/settings', { credentials: 'same-origin' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    state.aiSettings = data.settings || {};
+    state.aiProviders = data.providers || [];
+    renderAiSettings();
+  } catch (e) {
+    root.innerHTML = `<div class="empty-state"><p>Не удалось загрузить настройки ИИ: ${esc(e.message)}</p></div>`;
+  }
+}
+
+function renderAiSettings() {
+  const root = document.getElementById('ai-settings-root');
+  if (!root) return;
+  const settings = state.aiSettings || {};
+  const providers = state.aiProviders || [];
+  const providerOptions = providers.map(p => `<option value="${escAttr(p.id)}" ${p.id === settings.provider ? 'selected' : ''}>${esc(p.label)}</option>`).join('');
+  const provider = providers.find(p => p.id === settings.provider) || providers[0] || {};
+  const keyHint = settings.apiKeySet ? `Ключ сохранён: ${settings.apiKeyPreview}` : 'Ключ пока не задан';
+  const enabled = settings.enabled ? 'checked' : '';
+
+  root.innerHTML = `
+    <div class="ai-settings-grid">
+      <div class="ai-settings-main">
+        <div class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <h4>Настройка ИИ</h4>
+              <p>ИИ анализирует уже посчитанные признаки: HWID, IP-географию, ASN, трафик, правила и инциденты.</p>
+            </div>
+            <label class="rule-toggle ai-main-toggle" title="Включить ИИ">
+              <input type="checkbox" id="ai-enabled" ${enabled}>
+              <span class="rule-toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="ai-form-grid">
+            <div class="form-group">
+              <label for="ai-provider">Провайдер</label>
+              <select id="ai-provider" onchange="aiProviderChanged()">${providerOptions}</select>
+              <span class="hint">Можно использовать OpenAI, OpenRouter, Anthropic, Gemini или OpenAI-compatible endpoint.</span>
+            </div>
+
+            <div class="form-group">
+              <label for="ai-model">Модель</label>
+              <input type="text" id="ai-model" value="${escAttr(settings.model || provider.defaultModel || '')}" placeholder="model-name" />
+            </div>
+
+            <div class="form-group ai-secret-field">
+              <label for="ai-api-key">API-ключ</label>
+              <div class="input-with-toggle">
+                <input type="password" id="ai-api-key" value="" placeholder="${escAttr(keyHint)}" autocomplete="off" />
+                <button type="button" class="toggle-vis" onclick="toggleAiKeyVis()" title="Показать/скрыть">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </div>
+              <div class="ai-secret-actions">
+                <span class="hint">${esc(keyHint)}. Пустое поле оставит текущий ключ.</span>
+                ${settings.apiKeySet ? '<button type="button" class="btn-xs" onclick="markAiKeyClear()">Сбросить ключ</button>' : ''}
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="ai-base-url">Base URL</label>
+              <input type="text" id="ai-base-url" value="${escAttr(settings.baseUrl || provider.defaultBaseUrl || '')}" placeholder="https://api.example.com/v1" />
+            </div>
+
+            <div class="form-group">
+              <label for="ai-temperature">Temperature</label>
+              <input type="number" id="ai-temperature" value="${escAttr(settings.temperature ?? 0.2)}" min="0" max="2" step="0.1" />
+            </div>
+
+            <div class="form-group">
+              <label for="ai-max-tokens">Max tokens</label>
+              <input type="number" id="ai-max-tokens" value="${escAttr(settings.maxTokens || 900)}" min="128" max="4000" step="64" />
+            </div>
+
+            <div class="form-group">
+              <label for="ai-timeout">Таймаут, сек</label>
+              <input type="number" id="ai-timeout" value="${escAttr(settings.timeoutSeconds || 30)}" min="5" max="120" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="ai-system-prompt">Инструкция ИИ</label>
+            <textarea id="ai-system-prompt" class="settings-textarea" rows="5">${esc(settings.systemPrompt || '')}</textarea>
+          </div>
+
+          <div class="ai-actions">
+            <button class="btn-primary" id="ai-save-btn" onclick="saveAiSettings()">Сохранить</button>
+            <button class="btn-secondary" id="ai-test-btn" onclick="testAiSettings()">Проверить подключение</button>
+            <button class="btn-secondary" id="ai-suspects-btn" onclick="runAiSuspectsAnalysis()">Анализ подозрительных</button>
+          </div>
+
+          <div id="ai-settings-result" class="ai-result hidden"></div>
+        </div>
+      </div>
+
+      <div class="ai-settings-side">
+        <div class="settings-card ai-status-card ${settings.enabled ? 'is-on' : ''}">
+          <div class="ai-status-dot"></div>
+          <div>
+            <h4>${settings.enabled ? 'ИИ включен' : 'ИИ выключен'}</h4>
+            <p>${settings.enabled ? `${esc(provider.label || settings.provider)} · ${esc(settings.model || 'модель не указана')}` : 'Включи тумблер, задай провайдера и API-ключ.'}</p>
+          </div>
+        </div>
+
+        <div class="settings-card ai-privacy-card">
+          <h4>Приватность</h4>
+          <ul>
+            <li>В запрос уходят агрегированные признаки, а не сырые HWID.</li>
+            <li>IP отправляются как счетчики, страны, ASN и типы сетей.</li>
+            <li>ИИ не выполняет блокировки и только предлагает действие оператору.</li>
+          </ul>
+        </div>
+
+        <div class="settings-card ai-provider-card">
+          <h4>Текущий провайдер</h4>
+          <div class="provider-kv"><span>Тип</span><b>${esc(provider.kind || '—')}</b></div>
+          <div class="provider-kv"><span>Default URL</span><code>${esc(provider.defaultBaseUrl || 'задайте вручную')}</code></div>
+          <div class="provider-kv"><span>Default model</span><code>${esc(provider.defaultModel || 'задайте вручную')}</code></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function aiProviderChanged() {
+  const select = document.getElementById('ai-provider');
+  const model = document.getElementById('ai-model');
+  const baseUrl = document.getElementById('ai-base-url');
+  if (!select || !model || !baseUrl) return;
+  const provider = (state.aiProviders || []).find(p => p.id === select.value);
+  if (!provider) return;
+  model.value = provider.defaultModel || '';
+  baseUrl.value = provider.defaultBaseUrl || '';
+}
+
+function toggleAiKeyVis() {
+  const input = document.getElementById('ai-api-key');
+  if (!input) return;
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+function markAiKeyClear() {
+  const input = document.getElementById('ai-api-key');
+  if (!input) return;
+  input.value = '__clear__';
+  input.type = 'text';
+  toast('Ключ будет сброшен после сохранения', 'warning');
+}
+
+function readAiSettingsForm() {
+  return {
+    enabled: !!document.getElementById('ai-enabled')?.checked,
+    provider: document.getElementById('ai-provider')?.value || 'openai',
+    model: document.getElementById('ai-model')?.value.trim() || '',
+    apiKey: document.getElementById('ai-api-key')?.value.trim() || '',
+    baseUrl: document.getElementById('ai-base-url')?.value.trim() || '',
+    temperature: Number(document.getElementById('ai-temperature')?.value || 0.2),
+    maxTokens: Number(document.getElementById('ai-max-tokens')?.value || 900),
+    timeoutSeconds: Number(document.getElementById('ai-timeout')?.value || 30),
+    systemPrompt: document.getElementById('ai-system-prompt')?.value.trim() || '',
+  };
+}
+
+async function saveAiSettings(options = {}) {
+  const payload = readAiSettingsForm();
+  setBtnBusy('ai-save-btn', true, 'Сохранение...');
+  try {
+    const res = await fetch('/api/ai/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    state.aiSettings = data.settings || {};
+    if (!options.quiet) {
+      toast('Настройки ИИ сохранены', 'success');
+      renderAiSettings();
+    }
+    return state.aiSettings;
+  } catch (e) {
+    if (!options.quiet) toast('Ошибка сохранения ИИ: ' + e.message, 'error');
+    throw e;
+  } finally {
+    setBtnBusy('ai-save-btn', false);
+  }
+}
+
+async function testAiSettings() {
+  const result = document.getElementById('ai-settings-result');
+  setAiResult(result, '<div class="ai-result-loading"><div class="spinner-small"></div> Проверяю подключение...</div>');
+  setBtnBusy('ai-test-btn', true, 'Проверка...');
+  try {
+    await saveAiSettings({ quiet: true });
+    const res = await fetch('/api/ai/test', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    state.aiSettings = { ...state.aiSettings, enabled: true };
+    setAiResult(result, `<div class="ai-ok-title">Подключение работает</div><p>${esc(data.response?.summary || 'Провайдер ответил корректно.')}</p>`);
+    toast('ИИ подключен', 'success');
+  } catch (e) {
+    setAiResult(result, `<div class="ai-error-title">Ошибка подключения</div><p>${esc(e.message)}</p>`);
+  } finally {
+    setBtnBusy('ai-test-btn', false);
+  }
+}
+
+async function runAiSuspectsAnalysis() {
+  const result = document.getElementById('ai-settings-result');
+  setAiResult(result, '<div class="ai-result-loading"><div class="spinner-small"></div> Анализирую текущих подозрительных...</div>');
+  setBtnBusy('ai-suspects-btn', true, 'Анализ...');
+  try {
+    await saveAiSettings({ quiet: true });
+    const res = await fetch('/api/ai/analyze-suspects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ limit: 8 }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    setAiResult(result, renderAiAnalysisHtml(data.analysis, `Проверено записей: ${data.analyzedUsers || 0}`));
+  } catch (e) {
+    setAiResult(result, `<div class="ai-error-title">Анализ не выполнен</div><p>${esc(e.message)}</p>`);
+  } finally {
+    setBtnBusy('ai-suspects-btn', false);
+  }
+}
+
+async function runAiUserAnalysis(userKey) {
+  const result = document.getElementById('ai-user-analysis-result');
+  setAiResult(result, '<div class="ai-result-loading"><div class="spinner-small"></div> Проверяю клиента по всем данным...</div>');
+  try {
+    const res = await fetch('/api/ai/analyze-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ userKey }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    setAiResult(result, renderAiAnalysisHtml(data.analysis));
+  } catch (e) {
+    setAiResult(result, `<div class="ai-error-title">ИИ-анализ недоступен</div><p>${esc(e.message)}</p>`);
+  }
+}
+
+function checkClientWithAi(userKey) {
+  switchUcTab('signals');
+  requestAnimationFrame(() => {
+    const result = document.getElementById('ai-user-analysis-result');
+    if (result) result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  runAiUserAnalysis(userKey);
+}
+
+function aiUserPanelHtml(userKey) {
+  return `<div class="uc-section ai-user-panel">
+    <div class="uc-section-head">
+      <span>Проверка по всем данным</span>
+      <button class="btn-mini btn-accent" onclick="runAiUserAnalysis('${escAttr(userKey)}')">
+        ${IC._s('<path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/>', 14)}
+        Проверить
+      </button>
+    </div>
+    <div id="ai-user-analysis-result" class="ai-result ai-result-inline">
+      <p>ИИ сверит детекцию, историю IP/ASN/стран, HWID, подписочные запросы, связи, инциденты и аудит в безопасно агрегированном виде.</p>
+    </div>
+  </div>`;
+}
+
+function renderAiAnalysisHtml(analysis, metaText = '') {
+  if (!analysis) return '<p>ИИ не вернул структурированный анализ.</p>';
+  const level = analysis.riskLevel || 'watch';
+  const levelLabel = AI_RISK_LABELS[level] || level;
+  const action = AI_ACTION_LABELS[analysis.recommendedAction] || analysis.recommendedAction || '—';
+  const evidence = Array.isArray(analysis.evidence) ? analysis.evidence : [];
+  const counter = Array.isArray(analysis.counterEvidence) ? analysis.counterEvidence : [];
+  return `<div class="ai-analysis-card ai-risk-${escAttr(level)}">
+    <div class="ai-analysis-top">
+      <div>
+        <div class="ai-analysis-level">${esc(levelLabel)}</div>
+        <div class="ai-analysis-summary">${esc(analysis.summary || 'Нет краткого вывода')}</div>
+      </div>
+      <div class="ai-score-badge"><b>${Number(analysis.riskScore || 0)}</b><span>/100</span></div>
+    </div>
+    <div class="ai-analysis-meta">
+      <span>Уверенность: ${Number(analysis.confidence || 0)}%</span>
+      <span>Действие: ${esc(action)}</span>
+      ${metaText ? `<span>${esc(metaText)}</span>` : ''}
+    </div>
+    ${evidence.length ? `<div class="ai-list-block"><b>За риск</b>${evidence.map(item => `<span>${esc(item)}</span>`).join('')}</div>` : ''}
+    ${counter.length ? `<div class="ai-list-block ai-list-muted"><b>Что проверить</b>${counter.map(item => `<span>${esc(item)}</span>`).join('')}</div>` : ''}
+    ${analysis.operatorNote ? `<div class="ai-operator-note">${esc(analysis.operatorNote)}</div>` : ''}
+  </div>`;
+}
+
+function setAiResult(target, html) {
+  const el = typeof target === 'string' ? document.getElementById(target) : target;
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.innerHTML = html;
+}
+
+function setBtnBusy(id, busy, text) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  if (busy) {
+    btn.dataset.oldText = btn.textContent;
+    btn.textContent = text || 'Загрузка...';
+    btn.disabled = true;
+  } else {
+    btn.textContent = btn.dataset.oldText || btn.textContent;
+    btn.disabled = false;
+  }
 }
 
 // ─── SSE (Server-Sent Events) — real-time updates ────────────────
@@ -5335,7 +5707,7 @@ function initHotkeys() {
 
     // Number keys 1-6 — tab switching
     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-      const tabs = ['dashboard', 'sessions', 'suspects', 'incidents', 'relations', 'rules'];
+      const tabs = ['dashboard', 'sessions', 'suspects', 'incidents', 'relations', 'rules', 'settings'];
       const num = parseInt(e.key);
       if (num >= 1 && num <= tabs.length) {
         showTab(tabs[num - 1]);

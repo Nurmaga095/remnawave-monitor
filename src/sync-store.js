@@ -1001,6 +1001,14 @@ function createStore(options = {}) {
     return getMeta('detection_result', null);
   }
 
+  function setAiSettings(settings) {
+    setMeta('ai_settings', settings || {});
+  }
+
+  function getAiSettings() {
+    return getMeta('ai_settings', {});
+  }
+
   function saveAuditEntries(entries) {
     if (!Array.isArray(entries) || entries.length === 0) return;
     const now = Date.now();
@@ -1900,6 +1908,8 @@ function createStore(options = {}) {
     markNextSync,
     saveDetectionResult,
     getDetectionResult,
+    setAiSettings,
+    getAiSettings,
     saveAuditEntries,
     syncIncidentsFromDetection,
     getIncidents,

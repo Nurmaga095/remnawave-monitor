@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="css/style.css?v=20260505-v2.1" />
+  <link rel="stylesheet" href="css/style.css?v=20260507-ai" />
 </head>
 <body>
 
@@ -161,6 +161,14 @@
           </svg>
           <span>Правила</span>
           <span id="rules-badge" class="badge hidden">0</span>
+        </button>
+
+        <button class="nav-item" onclick="showTab('settings')" data-tab="settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 20h9"></path>
+            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+          </svg>
+          <span>Настройки</span>
         </button>
       </nav>
 
@@ -510,6 +518,40 @@
         </div>
       </div>
 
+      <div id="tab-settings" class="tab-content">
+        <div class="settings-header">
+          <div>
+            <h3>Настройки</h3>
+            <p>Параметры панели и подключение ИИ для объяснимого анализа рисков.</p>
+          </div>
+        </div>
+
+        <div class="settings-layout">
+          <aside class="settings-menu">
+            <button class="settings-menu-item active" data-settings-section="ai" onclick="showSettingsSection('ai')">
+              <span class="settings-menu-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2a10 10 0 1 0 10 10"></path>
+                  <path d="M12 6v6l4 2"></path>
+                </svg>
+              </span>
+              <span>Настройка ИИ</span>
+            </button>
+          </aside>
+
+          <section class="settings-content">
+            <div id="settings-section-ai" class="settings-section active">
+              <div id="ai-settings-root">
+                <div class="loading-state" style="padding:32px">
+                  <div class="spinner-large"></div>
+                  <p>Загрузка настроек ИИ...</p>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
     </main>
   </div>
 
@@ -523,6 +565,6 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=20260505-v2.1"></script>
+  <script src="js/app.js?v=20260507-ai"></script>
 </body>
 </html>

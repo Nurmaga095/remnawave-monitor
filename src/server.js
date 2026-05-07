@@ -7,6 +7,7 @@ const dns = require('dns').promises;
 const crypto = require('crypto');
 const { createStore } = require('./sync-store');
 const { createRemnawaveSync } = require('./remnawave-sync');
+const { createAiService } = require('./ai-service');
 
 const PROJECT_ROOT = path.join(__dirname, '..');
 loadEnvFile(path.join(PROJECT_ROOT, '.env'));
@@ -148,6 +149,8 @@ const dataSync = createRemnawaveSync({
   },
 });
 
+const aiService = createAiService({ store });
+
 const server = http.createServer(async (req, res) => {
   try {
     setSecurityHeaders(res);
@@ -277,6 +280,26 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/rule/acknowledge') {
       await handleRuleAcknowledge(req, res);
+      return;
+    }
+
+    if (pathname === '/api/ai/settings') {
+      await handleAiSettings(req, res);
+      return;
+    }
+
+    if (pathname === '/api/ai/test') {
+      await handleAiTest(req, res);
+      return;
+    }
+
+    if (pathname === '/api/ai/analyze-user') {
+      await handleAiAnalyzeUser(req, res);
+      return;
+    }
+
+    if (pathname === '/api/ai/analyze-suspects') {
+      await handleAiAnalyzeSuspects(req, res);
       return;
     }
 
@@ -1599,6 +1622,109 @@ async function handleRuleAcknowledge(req, res) {
     sendJson(res, 200, { ok: true });
   } catch (e) {
     sendJson(res, 400, { error: e.message });
+  }
+}
+
+// ─── AI Settings / Analysis Handlers ─────────────────────────────
+
+async function handleAiSettings(req, res) {
+  if (!requireAuth(req, res)) return;
+
+  if (req.method === 'GET') {
+    sendJson(res, 200, {
+      settings: aiService.getPublicSettings(),
+      providers: aiService.getProviderList(),
+    });
+    return;
+  }
+
+  if (req.method === 'POST') {
+    if (!requireActionRateLimit(req, res)) return;
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { sendJson(res, 400, { error: 'Invalid JSON' }); return; }
+    try {
+      const settings = aiService.saveSettings(body || {});
+      store.recordAudit(APP_USERNAME, getClientIp(req), 'ai_settings_update', null, {
+        enabled: settings.enabled,
+        provider: settings.provider,
+        model: settings.model,
+        apiKeySet: settings.apiKeySet,
+      });
+      sendJson(res, 200, { ok: true, settings });
+    } catch (e) {
+      sendJson(res, 400, { error: e.message || 'Failed to save AI settings' });
+    }
+    return;
+  }
+
+  sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'GET, POST' });
+}
+
+async function handleAiTest(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
+  if (req.method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' }); return; }
+
+  try {
+    const result = await aiService.testConnection();
+    store.recordAudit(APP_USERNAME, getClientIp(req), 'ai_test', null, {
+      provider: result.provider,
+      model: result.model,
+    });
+    sendJson(res, 200, result);
+  } catch (e) {
+    console.error('[ai] test error:', e.message);
+    sendJson(res, 400, { error: e.message || 'AI test failed' });
+  }
+}
+
+async function handleAiAnalyzeUser(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
+  if (req.method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' }); return; }
+
+  let body;
+  try { body = JSON.parse(await readBody(req)); } catch { sendJson(res, 400, { error: 'Invalid JSON' }); return; }
+  const userKey = String(body.userKey || '');
+  if (!userKey) { sendJson(res, 400, { error: 'userKey is required' }); return; }
+
+  try {
+    const result = await aiService.analyzeUser(store.getState(), userKey);
+    store.recordAudit(APP_USERNAME, getClientIp(req), 'ai_analyze_user', result.userKey, {
+      provider: result.provider,
+      model: result.model,
+      riskLevel: result.analysis && result.analysis.riskLevel,
+      riskScore: result.analysis && result.analysis.riskScore,
+    });
+    sendJson(res, 200, result);
+  } catch (e) {
+    console.error('[ai] analyze user error:', e.message);
+    sendJson(res, 400, { error: e.message || 'AI analysis failed' });
+  }
+}
+
+async function handleAiAnalyzeSuspects(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
+  if (req.method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' }); return; }
+
+  let body;
+  try { body = JSON.parse(await readBody(req)); } catch { body = {}; }
+  const limit = Math.min(20, Math.max(1, Number(body.limit || 8)));
+
+  try {
+    const result = await aiService.analyzeSuspects(store.getState(), limit);
+    store.recordAudit(APP_USERNAME, getClientIp(req), 'ai_analyze_suspects', null, {
+      provider: result.provider,
+      model: result.model,
+      analyzedUsers: result.analyzedUsers,
+      riskLevel: result.analysis && result.analysis.riskLevel,
+      riskScore: result.analysis && result.analysis.riskScore,
+    });
+    sendJson(res, 200, result);
+  } catch (e) {
+    console.error('[ai] analyze suspects error:', e.message);
+    sendJson(res, 400, { error: e.message || 'AI analysis failed' });
   }
 }
 
