@@ -346,6 +346,7 @@ function createRemnawaveSync(options) {
         uuid: nUuid,
         name: node.name || node.title || node.hostname || nUuid,
         address: node.address || node.ip || node.host || '',
+        port: node.port || null,
         isConnected: node.isConnected ?? node.is_connected ?? null,
         isDisabled: node.isDisabled ?? node.is_disabled ?? false,
         isTrafficTrackingActive: node.isTrafficTrackingActive ?? null,
@@ -354,6 +355,20 @@ function createRemnawaveSync(options) {
         usersOnline: nUuid ? (nodeUserSets[nUuid] ? nodeUserSets[nUuid].size : 0) : 0,
         ipsOnline: nUuid ? (nodeIpSets[nUuid] ? nodeIpSets[nUuid].size : 0) : 0,
         countryCode: node.countryCode || node.country_code || '',
+        // Расширенные данные
+        cpuCount: node.cpuCount ?? node.cpu_count ?? null,
+        cpuUsage: node.cpuUsage ?? node.cpu_usage ?? null,
+        memoryTotal: node.memoryTotal ?? null,
+        memoryUsed: node.memoryUsed ?? null,
+        uptime: node.uptime ?? null,
+        networkDownload: node.networkDownload ?? node.download ?? null,
+        networkUpload: node.networkUpload ?? node.upload ?? null,
+        networkDownloadSpeed: node.networkDownloadSpeed ?? node.downloadSpeed ?? null,
+        networkUploadSpeed: node.networkUploadSpeed ?? node.uploadSpeed ?? null,
+        xrayVersion: node.xrayVersion ?? node.xray_version ?? null,
+        isNodeOnline: node.isNodeOnline ?? node.isConnected ?? null,
+        usersCount: node.usersCount ?? node.users_count ?? null,
+        consumptionMultiplier: node.consumptionMultiplier ?? null,
       };
     });
 

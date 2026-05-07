@@ -1291,6 +1291,15 @@ function fmtBytes(bytes) {
   return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0) + ' ' + units[i];
 }
 
+function countryToFlag(cc) {
+  if (!cc || cc.length !== 2) return '';
+  const upper = cc.toUpperCase();
+  return String.fromCodePoint(
+    0x1F1E6 + upper.charCodeAt(0) - 65,
+    0x1F1E6 + upper.charCodeAt(1) - 65
+  );
+}
+
 // ─── Activity Chart (SVG) ─────────────────────────────────────────
 function renderActivityChart() {
   const el = document.getElementById('activity-chart');
@@ -1585,7 +1594,7 @@ function renderDashboard() {
     badge.classList.add('hidden');
   }
 
-  // Nodes stats widget
+  // Nodes stats widget — компактные карточки
   const nodesEl = document.getElementById('nodes-stats');
   if (nodesEl) {
     const nodes = (state.data && state.data.nodesInfo) || [];
@@ -1594,29 +1603,69 @@ function renderDashboard() {
     if (activeNodes.length === 0) {
       nodesEl.innerHTML = '<div class="empty-state sm"><p>Нет данных о серверах</p></div>';
     } else {
-      const maxUsers = Math.max(1, ...activeNodes.map(n => n.usersOnline || 0));
       nodesEl.innerHTML = activeNodes.map(n => {
-        const isOnline = n.isConnected === true;
-        const statusDot = isOnline
-          ? '<span class="node-dot node-dot-on" title="Подключён"></span>'
-          : '<span class="node-dot node-dot-off" title="Отключён"></span>';
-        const users = n.usersOnline || 0;
-        const pct = (users / maxUsers * 100).toFixed(0);
+        const isOnline = n.isConnected === true || n.isNodeOnline === true;
+        const users = n.usersOnline || n.usersCount || 0;
         const trafficUsed = n.trafficUsedBytes || 0;
         const trafficLimit = n.trafficLimitBytes || 0;
-        const trafficStr = trafficLimit > 0
-          ? `${fmtBytes(trafficUsed)} / ${fmtBytes(trafficLimit)}`
-          : fmtBytes(trafficUsed);
-        const trafficPct = trafficLimit > 0 ? Math.min(100, trafficUsed / trafficLimit * 100).toFixed(0) : 0;
-        const trafficWarn = trafficLimit > 0 && trafficUsed / trafficLimit > 0.9;
-        return `<div class="node-row">
-          <div class="node-name">${statusDot} ${esc(n.name)}${n.countryCode ? ` <span class="node-cc">${esc(n.countryCode)}</span>` : ''}</div>
-          <div class="node-bar-wrap">
-            <div class="cstat-bar-bg"><div class="cstat-bar-fill" style="width:${pct}%"></div></div>
+        const trafficPct = trafficLimit > 0 ? Math.min(100, trafficUsed / trafficLimit * 100) : 0;
+        const trafficWarn = trafficPct > 85;
+
+        // Форматируем аптайм
+        const uptimeSec = n.uptime || 0;
+        let uptimeStr = '';
+        if (uptimeSec > 0) {
+          const d = Math.floor(uptimeSec / 86400);
+          const h = Math.floor((uptimeSec % 86400) / 3600);
+          const m = Math.floor((uptimeSec % 3600) / 60);
+          if (d > 0) uptimeStr = `${d}д ${h}ч`;
+          else if (h > 0) uptimeStr = `${h}ч ${m}м`;
+          else uptimeStr = `${m}м`;
+        }
+
+        // Скорость
+        const fmtSpeed = (bps) => {
+          if (!bps || bps <= 0) return '0';
+          if (bps >= 1e9) return (bps / 1e9).toFixed(1) + ' Gb/s';
+          if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mb/s';
+          if (bps >= 1e3) return (bps / 1e3).toFixed(0) + ' Kb/s';
+          return bps.toFixed(0) + ' b/s';
+        };
+        const dlSpeed = n.networkDownloadSpeed || 0;
+        const ulSpeed = n.networkUploadSpeed || 0;
+
+        // Нагрузка CPU
+        const cpuPct = n.cpuUsage != null ? Number(n.cpuUsage).toFixed(0) : null;
+
+        // Флаг страны (эмодзи)
+        const countryFlag = n.countryCode ? countryToFlag(n.countryCode) : '';
+
+        return `<div class="nd-card ${isOnline ? '' : 'nd-offline'}">
+          <div class="nd-top">
+            <span class="nd-status ${isOnline ? 'nd-on' : 'nd-off'}" title="${isOnline ? 'Онлайн' : 'Офлайн'}"></span>
+            <span class="nd-flag">${countryFlag}</span>
+            <span class="nd-name">${esc(n.name)}</span>
+            ${n.countryCode ? `<span class="nd-cc">${esc(n.countryCode)}</span>` : ''}
+            <span class="nd-addr" title="${esc(n.address)}">${esc(n.address)}${n.port ? ':' + n.port : ''}</span>
           </div>
-          <div class="node-meta">
-            <span class="node-users" title="Пользователей онлайн">👤 ${users}</span>
-            <span class="node-traffic${trafficWarn ? ' node-traffic-warn' : ''}" title="Трафик">${trafficStr}${trafficLimit > 0 ? ` (${trafficPct}%)` : ''}</span>
+          <div class="nd-bar">
+            <div class="nd-bar-fill ${trafficWarn ? 'nd-bar-warn' : ''}" style="width:${trafficPct.toFixed(0)}%"></div>
+          </div>
+          <div class="nd-bottom">
+            <span class="nd-chip" title="Пользователей онлайн">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              ${users}
+            </span>
+            ${cpuPct !== null ? `<span class="nd-chip ${Number(cpuPct) > 80 ? 'nd-chip-warn' : ''}" title="Нагрузка CPU">⚡ ${cpuPct}%</span>` : ''}
+            <span class="nd-chip nd-traffic ${trafficWarn ? 'nd-chip-warn' : ''}" title="Трафик">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              ${fmtBytes(trafficUsed)}${trafficLimit > 0 ? ' / ' + fmtBytes(trafficLimit) : ''}
+            </span>
+            ${(dlSpeed > 0 || ulSpeed > 0) ? `<span class="nd-chip nd-speed" title="↓ Download / ↑ Upload">
+              <span class="nd-dl">↓${fmtSpeed(dlSpeed)}</span>
+              <span class="nd-ul">↑${fmtSpeed(ulSpeed)}</span>
+            </span>` : ''}
+            ${uptimeStr ? `<span class="nd-chip nd-uptime" title="Аптайм">⏱ ${uptimeStr}</span>` : ''}
           </div>
         </div>`;
       }).join('');
