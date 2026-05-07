@@ -1959,18 +1959,7 @@ function switchUcTab(tabName) {
 let _currentCardUserKey = '';
 
 function openUserByName(name) {
-  if (!state.data || !state.data.users) return;
-  const user = state.data.users.find(u =>
-    (u.username || '').toLowerCase() === name.toLowerCase() ||
-    (u.shortUuid || '') === name ||
-    (u.uuid || '') === name
-  );
-  if (user) {
-    const key = getUserKey(user);
-    openUserCard(key);
-  } else {
-    toast('Пользователь «' + name + '» не найден', 'warning');
-  }
+  openUserCard(name);
 }
 
 function openUserCard(key) {
@@ -2913,7 +2902,7 @@ function userCardHtml(u) {
 
       const linkedHtml = linkedNames.length > 0
         ? `<div class="signal-linked">${linkedNames.map(name =>
-            `<button class="signal-linked-btn" onclick="event.stopPropagation();openUserByName('${esc(name)}')" title="Открыть карточку ${esc(name)}">
+            `<button type="button" class="signal-linked-btn" onclick="openUserCard('${escAttr(name)}')" title="Открыть карточку ${escAttr(name)}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               ${esc(name)}
             </button>`).join('')}</div>` : '';
