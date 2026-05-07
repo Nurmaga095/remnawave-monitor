@@ -59,16 +59,10 @@ const DEFAULT_SETTINGS = {
 function createAiService({ store }) {
   function getSettings() {
     const saved = store.getAiSettings ? store.getAiSettings() : {};
-    const env = getEnvSettings();
-    const merged = {
+    return normalizeSettings({
       ...DEFAULT_SETTINGS,
-      ...env,
       ...saved,
-    };
-
-    if (!saved.apiKey && env.apiKey) merged.apiKey = env.apiKey;
-    if (!saved.baseUrl && env.baseUrl) merged.baseUrl = env.baseUrl;
-    return normalizeSettings(merged, { keepUnknownKey: true });
+    }, { keepUnknownKey: true });
   }
 
   function getPublicSettings() {
@@ -174,22 +168,6 @@ function createAiService({ store }) {
     }
     return null;
   }
-}
-
-function getEnvSettings() {
-  const provider = String(process.env.AI_PROVIDER || '').trim();
-  const providerDef = PROVIDERS[provider] || null;
-  const env = {};
-
-  if (providerDef) env.provider = provider;
-  if (process.env.AI_ENABLED !== undefined) env.enabled = String(process.env.AI_ENABLED).toLowerCase() === 'true';
-  if (process.env.AI_MODEL) env.model = String(process.env.AI_MODEL).trim();
-  if (process.env.AI_BASE_URL) env.baseUrl = String(process.env.AI_BASE_URL).trim().replace(/\/+$/, '');
-  if (process.env.AI_API_KEY) env.apiKey = String(process.env.AI_API_KEY).trim();
-  if (process.env.AI_TEMPERATURE) env.temperature = Number(process.env.AI_TEMPERATURE);
-  if (process.env.AI_MAX_TOKENS) env.maxTokens = Number(process.env.AI_MAX_TOKENS);
-  if (process.env.AI_TIMEOUT_SECONDS) env.timeoutSeconds = Number(process.env.AI_TIMEOUT_SECONDS);
-  return env;
 }
 
 function normalizeSettings(input = {}, options = {}) {

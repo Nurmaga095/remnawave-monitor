@@ -142,13 +142,6 @@ REMNAWAVE_API_TOKEN=ваш-api-токен-remnawave
 
 # Опционально: Telegram-предупреждения
 TELEGRAM_BOT_TOKEN=токен-вашего-бота
-
-# Опционально: ИИ-анализ
-AI_ENABLED=false
-AI_PROVIDER=openai
-AI_API_KEY=ключ-провайдера
-AI_MODEL=gpt-4o-mini
-AI_BASE_URL=https://api.openai.com/v1
 ```
 
 ### Запуск
@@ -260,18 +253,9 @@ sudo journalctl -u remnawave-monitor -n 30 --no-pager
 
 ### ИИ-анализ
 
-Эти параметры можно задать в `.env` или через вкладку **Настройки → Настройка ИИ** в панели.
+Настройки ИИ не задаются через `.env`. Провайдер, модель, Base URL, API-ключ, таймаут, лимиты и системная инструкция сохраняются в SQLite-базе панели через **Настройки → Настройка ИИ**.
 
-| Переменная | Описание | По умолчанию |
-|---|---|---|
-| `AI_ENABLED` | Включить ИИ-анализ | `false` |
-| `AI_PROVIDER` | `openai`, `openrouter`, `anthropic`, `google`, `custom` | `openai` |
-| `AI_API_KEY` | API-ключ выбранного провайдера | — |
-| `AI_MODEL` | Название модели | `gpt-4o-mini` |
-| `AI_BASE_URL` | Base URL API | `https://api.openai.com/v1` |
-| `AI_TEMPERATURE` | Температура ответа | `0.2` |
-| `AI_MAX_TOKENS` | Максимум токенов ответа | `900` |
-| `AI_TIMEOUT_SECONDS` | Таймаут запроса | `30` |
+Поддерживаются OpenAI, OpenRouter, Anthropic, Google Gemini и custom OpenAI-compatible endpoint. API-ключ не отдается в браузер целиком: UI показывает только маску сохраненного ключа.
 
 ### Синхронизация и хранение
 
