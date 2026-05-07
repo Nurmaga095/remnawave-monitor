@@ -403,6 +403,11 @@ function createStore(options = {}) {
       setMeta('node_map', snapshot.nodeMap);
     }
 
+    // Save nodesInfo if provided
+    if (Array.isArray(snapshot.nodesInfo) && snapshot.nodesInfo.length > 0) {
+      setMeta('nodes_info', snapshot.nodesInfo);
+    }
+
     setMeta('last_snapshot', {
       ts,
       userCount: users.length,
@@ -534,6 +539,7 @@ function createStore(options = {}) {
       relations: _cachedRelations,
       proxyData: ipChecker.getAllCached(),
       nodeMap: getMeta('node_map', {}),
+      nodesInfo: getMeta('nodes_info', []),
       subHistory: getSubHistoryGrouped(),
     };
   }

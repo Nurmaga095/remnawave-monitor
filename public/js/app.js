@@ -508,6 +508,7 @@ function applyCachedState(snapshot) {
     incidentStats: snapshot.incidentStats || {},
     relations: snapshot.relations || null,
     nodeMap: snapshot.nodeMap || {},
+    nodesInfo: Array.isArray(snapshot.nodesInfo) ? snapshot.nodesInfo : [],
     subHistory: snapshot.subHistory || {},
   };
   state.ipHistory = (Array.isArray(snapshot.ipHistory) ? snapshot.ipHistory : []).map((snap) => {
@@ -1584,29 +1585,39 @@ function renderDashboard() {
     badge.classList.add('hidden');
   }
 
-  // Country stats widget
-  const countryEl = document.getElementById('country-stats');
-  if (countryEl) {
-    const countryCounts = {};
-    for (const [, ips] of Object.entries(activeSource)) {
-      for (const entry of (Array.isArray(ips) ? ips : [])) {
-        const geo = entry.geo || {};
-        const cc = geo.countryCode || '';
-        if (cc) countryCounts[cc] = (countryCounts[cc] || 0) + 1;
-      }
-    }
-    const sorted = Object.entries(countryCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    const maxC = sorted.length ? sorted[0][1] : 1;
-    document.getElementById('country-count').textContent = sorted.length;
-    if (sorted.length === 0) {
-      countryEl.innerHTML = '<div class="empty-state sm"><p>Нет гео-данных</p></div>';
+  // Nodes stats widget
+  const nodesEl = document.getElementById('nodes-stats');
+  if (nodesEl) {
+    const nodes = (state.data && state.data.nodesInfo) || [];
+    const activeNodes = nodes.filter(n => !n.isDisabled);
+    document.getElementById('nodes-count').textContent = activeNodes.length;
+    if (activeNodes.length === 0) {
+      nodesEl.innerHTML = '<div class="empty-state sm"><p>Нет данных о серверах</p></div>';
     } else {
-      countryEl.innerHTML = sorted.map(([cc, cnt]) => {
-        const pct = (cnt / maxC * 100).toFixed(0);
-        return `<div class="cstat-row">
-          <span class="cstat-cc">${esc(cc)}</span>
-          <div class="cstat-bar-bg"><div class="cstat-bar-fill" style="width:${pct}%"></div></div>
-          <span class="cstat-cnt">${cnt}</span>
+      const maxUsers = Math.max(1, ...activeNodes.map(n => n.usersOnline || 0));
+      nodesEl.innerHTML = activeNodes.map(n => {
+        const isOnline = n.isConnected === true;
+        const statusDot = isOnline
+          ? '<span class="node-dot node-dot-on" title="Подключён"></span>'
+          : '<span class="node-dot node-dot-off" title="Отключён"></span>';
+        const users = n.usersOnline || 0;
+        const pct = (users / maxUsers * 100).toFixed(0);
+        const trafficUsed = n.trafficUsedBytes || 0;
+        const trafficLimit = n.trafficLimitBytes || 0;
+        const trafficStr = trafficLimit > 0
+          ? `${fmtBytes(trafficUsed)} / ${fmtBytes(trafficLimit)}`
+          : fmtBytes(trafficUsed);
+        const trafficPct = trafficLimit > 0 ? Math.min(100, trafficUsed / trafficLimit * 100).toFixed(0) : 0;
+        const trafficWarn = trafficLimit > 0 && trafficUsed / trafficLimit > 0.9;
+        return `<div class="node-row">
+          <div class="node-name">${statusDot} ${esc(n.name)}${n.countryCode ? ` <span class="node-cc">${esc(n.countryCode)}</span>` : ''}</div>
+          <div class="node-bar-wrap">
+            <div class="cstat-bar-bg"><div class="cstat-bar-fill" style="width:${pct}%"></div></div>
+          </div>
+          <div class="node-meta">
+            <span class="node-users" title="Пользователей онлайн">👤 ${users}</span>
+            <span class="node-traffic${trafficWarn ? ' node-traffic-warn' : ''}" title="Трафик">${trafficStr}${trafficLimit > 0 ? ` (${trafficPct}%)` : ''}</span>
+          </div>
         </div>`;
       }).join('');
     }

@@ -96,7 +96,7 @@ function createRemnawaveSync(options) {
       }
 
       const users = await fetchAllUsers();
-      const { activeIps, nodeMap } = await fetchActiveIps(users, warnings);
+      const { activeIps, nodeMap, nodesInfo } = await fetchActiveIps(users, warnings);
       await enrichActiveIpGeo(activeIps, warnings);
       const hwidTop = await fetchHwidTop(warnings);
       const hwidDevices = await fetchHwidDevices(hwidTop, users, activeIps, warnings);
@@ -145,6 +145,7 @@ function createRemnawaveSync(options) {
         hwidDevices,
         proxyData,
         nodeMap,
+        nodesInfo,
         warnings,
       });
 
@@ -258,7 +259,7 @@ function createRemnawaveSync(options) {
       nodes = extractArray(nodesRaw, ['nodes']);
     } catch (e) {
       warnings.push(`[nodes] ${e.message}`);
-      return { activeIps, nodeMap: {} };
+      return { activeIps, nodeMap: {}, nodesInfo: [] };
     }
 
     // Build nodeUuid -> name mapping
@@ -283,9 +284,15 @@ function createRemnawaveSync(options) {
       if (numId && uuid) idToUuid[numId] = String(uuid);
     }
 
+    // Статистика по нодам: пользователи и IP
+    const nodeUserSets = {}; // nodeUuid -> Set<userKey>
+    const nodeIpSets = {};   // nodeUuid -> Set<ip>
+
     for (const node of nodes) {
       const nodeUuid = node.uuid || node.id;
       if (!nodeUuid) continue;
+      nodeUserSets[nodeUuid] = new Set();
+      nodeIpSets[nodeUuid] = new Set();
 
       try {
         const jobData = await api('POST', `/api/ip-control/fetch-users-ips/${nodeUuid}`, {});
@@ -310,6 +317,11 @@ function createRemnawaveSync(options) {
           if (!numId || ipObjs.length === 0) continue;
 
           const key = idToUuid[numId] || numId;
+          nodeUserSets[nodeUuid].add(key);
+          for (const entry of ipObjs) {
+            nodeIpSets[nodeUuid].add(entry.ip);
+          }
+
           if (!activeIps[key]) activeIps[key] = {};
           for (const entry of ipObjs) {
             const existing = activeIps[key][entry.ip];
@@ -327,7 +339,25 @@ function createRemnawaveSync(options) {
       activeIps[key] = Object.values(activeIps[key]);
     }
 
-    return { activeIps, nodeMap };
+    // Формируем информацию о нодах
+    const nodesInfo = nodes.map(node => {
+      const nUuid = node.uuid || node.id;
+      return {
+        uuid: nUuid,
+        name: node.name || node.title || node.hostname || nUuid,
+        address: node.address || node.ip || node.host || '',
+        isConnected: node.isConnected ?? node.is_connected ?? null,
+        isDisabled: node.isDisabled ?? node.is_disabled ?? false,
+        isTrafficTrackingActive: node.isTrafficTrackingActive ?? null,
+        trafficLimitBytes: node.trafficLimitBytes ?? node.traffic_limit ?? 0,
+        trafficUsedBytes: node.trafficUsedBytes ?? node.traffic_used ?? 0,
+        usersOnline: nUuid ? (nodeUserSets[nUuid] ? nodeUserSets[nUuid].size : 0) : 0,
+        ipsOnline: nUuid ? (nodeIpSets[nUuid] ? nodeIpSets[nUuid].size : 0) : 0,
+        countryCode: node.countryCode || node.country_code || '',
+      };
+    });
+
+    return { activeIps, nodeMap, nodesInfo };
   }
 
   async function enrichActiveIpGeo(activeIps, warnings) {
