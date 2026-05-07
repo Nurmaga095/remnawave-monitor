@@ -312,6 +312,7 @@ function createDetector(options = {}) {
 
     // Check other users for same HWID or shared IP
     let hwidLinked = 0, ipLinked = 0;
+    const hwidLinkedAccounts = []; // имена совпадающих аккаунтов
     for (const [otherKey, devices] of Object.entries(state.hwidDevices || {})) {
       if (keys.includes(otherKey)) continue;
       if (!Array.isArray(devices)) continue;
@@ -319,6 +320,13 @@ function createDetector(options = {}) {
         const hwid = (d && (d.hwid || d.deviceKey || d.key || '')).toLowerCase();
         if (hwid && hwid.length >= 8 && userHwids.has(hwid)) {
           hwidLinked++;
+          // Найти username по ключу
+          const linkedUser = (state.users || []).find(u2 => {
+            const u2keys = [u2.uuid, u2.id, u2.username, u2.shortUuid].map(String).filter(Boolean);
+            return u2keys.includes(otherKey);
+          });
+          const linkedName = linkedUser ? (linkedUser.username || linkedUser.shortUuid || otherKey) : otherKey;
+          hwidLinkedAccounts.push(linkedName);
           break;
         }
       }
@@ -337,11 +345,13 @@ function createDetector(options = {}) {
     // HWID sharing is very strong signal
     if (hwidLinked >= 2) {
       return { id: 'fingerprint_cluster', category: 'strong', active: true, points: 25,
-        reason: `HWID совпадает с ${hwidLinked} аккаунтами` };
+        reason: `HWID совпадает с ${hwidLinked} аккаунтами: ${hwidLinkedAccounts.join(', ')}`,
+        linkedAccounts: hwidLinkedAccounts };
     }
     if (hwidLinked === 1) {
       return { id: 'fingerprint_match', category: 'strong', active: true, points: 15,
-        reason: `общий HWID с 1 аккаунтом` };
+        reason: `общий HWID с аккаунтом: ${hwidLinkedAccounts[0]}`,
+        linkedAccounts: hwidLinkedAccounts };
     }
     // Same IP from different accounts (weaker signal)
     if (ipLinked >= 3) {

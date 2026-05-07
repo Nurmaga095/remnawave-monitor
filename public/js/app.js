@@ -1958,6 +1958,21 @@ function switchUcTab(tabName) {
 
 let _currentCardUserKey = '';
 
+function openUserByName(name) {
+  if (!state.data || !state.data.users) return;
+  const user = state.data.users.find(u =>
+    (u.username || '').toLowerCase() === name.toLowerCase() ||
+    (u.shortUuid || '') === name ||
+    (u.uuid || '') === name
+  );
+  if (user) {
+    const key = getUserKey(user);
+    openUserCard(key);
+  } else {
+    toast('Пользователь «' + name + '» не найден', 'warning');
+  }
+}
+
 function openUserCard(key) {
   const user = findUserByAnyKey(key);
   const modal = document.getElementById('user-modal');
@@ -2893,6 +2908,10 @@ function userCardHtml(u) {
           ${s.points > 0 ? `<span class="signal-pts">+${s.points}</span>` : ''}
         </div>
         ${detailText && detailText !== titleText ? `<div class="signal-card-detail">${esc(detailText)}</div>` : ''}
+        ${Array.isArray(s.linkedAccounts) && s.linkedAccounts.length > 0 ? `<div class="signal-linked">
+          <span class="signal-linked-label">Совпадает с:</span>
+          ${s.linkedAccounts.map(name => `<span class="signal-linked-name" onclick="openUserByName('${esc(name)}')" title="Открыть профиль">${esc(name)}</span>`).join('')}
+        </div>` : ''}
       </div>`;
     }).join('');
     signalsHtml = `<div class="uc-section">
