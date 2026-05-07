@@ -3,6 +3,11 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const { createIpChecker } = require('./ip-check');
 const { createRuleEngine } = require('./rules');
+const { getUserKey: _getUserKey, getUserAliases: _getUserAliases, buildUserAliasMap } = require('./utils');
+
+// Алиасы для совместимости с существующим кодом внутри файла
+const userKey = _getUserKey;
+const userAliases = _getUserAliases;
 
 function createStore(options = {}) {
   const dbPath = options.dbPath || path.join(__dirname, 'data', 'remnawave-monitor.sqlite');
@@ -1947,39 +1952,7 @@ function createStore(options = {}) {
   };
 }
 
-function userKey(user) {
-  if (!user) return '';
-  return String(user.userUuid || user.uuid || user.id || user.userId || user.username || user.name || '');
-}
-
-function userAliases(user) {
-  if (!user) return [];
-  return Array.from(new Set([
-    userKey(user),
-    user.userUuid,
-    user.uuid,
-    user.id,
-    user.userId,
-    user.shortUuid,
-    user.shortUserUuid,
-    user.username,
-    user.name,
-  ]
-    .filter((value) => value !== null && value !== undefined && value !== '')
-    .map(String)));
-}
-
-function buildUserAliasMap(users) {
-  const map = new Map();
-  for (const user of users || []) {
-    const key = userKey(user);
-    if (!key) continue;
-    for (const alias of userAliases(user)) {
-      if (!map.has(alias)) map.set(alias, key);
-    }
-  }
-  return map;
-}
+// userKey, userAliases и buildUserAliasMap импортированы из utils.js
 
 function normalizeHwidDevices(hwidDevices, canonicalUserKey) {
   const byUser = {};

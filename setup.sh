@@ -287,7 +287,9 @@ if node --check src/server.js && \
    node --check src/sync-store.js && \
    node --check src/detect.js && \
    node --check src/rules.js && \
-   node --check src/ip-check.js; then
+   node --check src/ip-check.js && \
+   node --check src/ai-service.js && \
+   node --check src/utils.js; then
   success "Синтаксис исходных файлов корректен"
 else
   error "Проверка синтаксиса не пройдена!"

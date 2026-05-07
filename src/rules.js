@@ -1,6 +1,8 @@
 // src/rules.js — Rule Engine for automated monitoring
 // Rules only NOTIFY admin — no auto-actions
 
+const { getUserKey, getUserAliases } = require('./utils');
+
 function createRuleEngine(db) {
   // Create rules tables
   db.exec(`
@@ -236,27 +238,7 @@ function createRuleEngine(db) {
     return { key, ctx };
   }
 
-  function getUserKey(user) {
-    if (!user) return '';
-    return String(user.userUuid || user.uuid || user.id || user.userId || user.username || user.name || '');
-  }
-
-  function getUserAliases(user) {
-    if (!user) return [];
-    return Array.from(new Set([
-      getUserKey(user),
-      user.userUuid,
-      user.uuid,
-      user.id,
-      user.userId,
-      user.shortUuid,
-      user.shortUserUuid,
-      user.username,
-      user.name,
-    ]
-      .filter(value => value !== null && value !== undefined && value !== '')
-      .map(String)));
-  }
+  // getUserKey и getUserAliases импортированы из utils.js
 
   function getActiveIpsForUser(user, stateData) {
     const activeIps = stateData.activeIps || {};

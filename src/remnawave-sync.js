@@ -1,6 +1,6 @@
 const https = require('https');
 const { URL } = require('url');
-const { userKey } = require('./sync-store');
+const { getUserKey: userKey, getUserAliases: userAliases } = require('./utils');
 const { createDetector } = require('./detect');
 
 function createRemnawaveSync(options) {
@@ -715,22 +715,7 @@ function resolveUser(source, lookup) {
   return null;
 }
 
-function userAliases(user) {
-  if (!user) return [];
-  return [
-    userKey(user),
-    user.userUuid,
-    user.uuid,
-    user.id,
-    user.userId,
-    user.shortUuid,
-    user.shortUserUuid,
-    user.username,
-    user.name,
-  ]
-    .filter((value) => value !== null && value !== undefined && value !== '')
-    .map(String);
-}
+// userAliases импортирована из utils.js
 
 function firstValue(...values) {
   return values.find((value) => value !== null && value !== undefined && value !== '');

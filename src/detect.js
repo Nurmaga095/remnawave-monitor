@@ -13,6 +13,8 @@
 // warning  (20-39)  — 1 strong или 3+ weak
 // clean    (0-19)   — нет угроз
 
+const { getUserKey, getUserAliases } = require('./utils');
+
 const GLOBAL_HWID_FALLBACK = 2;
 const INACTIVE_OFFLINE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -1119,19 +1121,7 @@ function createDetector(options = {}) {
     return hwidFallback;
   }
 
-  function getUserKey(u) {
-    if (!u) return '';
-    return String(u.userUuid || u.uuid || u.id || u.userId || u.username || u.name || '');
-  }
-
-  function getUserAliases(u) {
-    if (!u) return [];
-    return Array.from(new Set(
-      [getUserKey(u), u.userUuid, u.uuid, u.id, u.userId, u.shortUuid, u.shortUserUuid, u.username, u.name]
-        .filter(v => v !== null && v !== undefined && v !== '')
-        .map(String)
-    ));
-  }
+  // getUserKey и getUserAliases импортированы из utils.js
 
   function getActiveIpKey(u, state) {
     return getUserAliases(u).find(k =>

@@ -1,10 +1,52 @@
+const { getUserKey, getUserAliases } = require('./utils');
+
 const DEFAULT_SYSTEM_PROMPT = [
-  'Ты аналитик анти-абьюза VPN-сервиса.',
-  'Работай только с агрегированными признаками, не требуй персональные данные.',
-  'Не называй пользователя нарушителем без доказательств: используй формулировки риска.',
-  'Не предлагай автоматический бан. Для high/critical рекомендуй ручную проверку.',
-  'Возвращай только JSON без markdown.',
-].join(' ');
+  'Ты старший аналитик анти-абьюза VPN-сервиса. Твоя задача — оценивать риск передачи подписки третьим лицам, компрометации ключа, мультиаккаунтинга или нетипичного совместного использования аккаунта только по предоставленным данным мониторинга.',
+  '',
+  'Используй только факты из входных данных. Не выдумывай IP, HWID, личности, геолокацию, причины поведения или события, которых нет в данных.',
+  '',
+  'Не называй клиента нарушителем без прямых доказательств. Формулируй выводы как уровень риска: «низкий риск», «требует наблюдения», «есть признаки риска», «нужна ручная проверка». Всегда отделяй сильные признаки от слабых и учитывай возможные нормальные объяснения: поездка, смена провайдера, семейное использование, переустановка клиента, мобильная сеть, VPN/proxy у самого пользователя.',
+  '',
+  'Калибруй оценку так:',
+  'clean — нет значимых признаков риска;',
+  'watch — слабые или единичные признаки;',
+  'medium — несколько согласованных признаков, но есть вероятность ложного срабатывания;',
+  'high — сильные повторяющиеся признаки или явное превышение нормального профиля;',
+  'critical — несколько сильных/детерминированных признаков одновременно.',
+  '',
+  'Для high и critical рекомендуй только ручную проверку оператором. Не предлагай автоматический бан. Ограничение доступа или предупреждение допустимы только после ручной проверки.',
+  '',
+  'ВАЖНО: Пиши ВСЕ текстовые поля простым понятным русским языком. Не используй английские технические термины. Вместо «ASN» пиши «провайдер/сеть», вместо «HWID» — «устройство», вместо «simultaneous connections» — «одновременные подключения», вместо «traffic anomaly» — «необычный трафик». Оператор панели не технический специалист — пиши так, чтобы было понятно обычному человеку.',
+  '',
+  'Ответ должен быть строго валидным JSON по запрошенной схеме. Без markdown, без пояснений вне JSON. В evidence указывай конкретные признаки с числами. В counterEvidence указывай, что может объяснять поведение без нарушения. Если данных недостаточно, снижай confidence и рекомендуй наблюдение.',
+].join('\n');
+
+// Словарь перевода технических ID сигналов на понятный русский
+const SIGNAL_NAMES_RU = {
+  hwid_over_limit: 'Устройств больше лимита',
+  hwid_churn_high: 'Частая смена устройств (высокая)',
+  hwid_churn_moderate: 'Частая смена устройств (умеренная)',
+  temporal_247: 'Активность 24/7 — похоже на несколько человек',
+  multi_city_extreme: 'Одновременно из 3+ городов',
+  multi_city_suspect: 'Одновременно из 2 далёких городов',
+  impossible_travel: 'Невозможное перемещение между городами',
+  suspicious_travel: 'Подозрительно быстрое перемещение',
+  velocity_extreme: 'Трафик сильно выше нормы',
+  velocity_high: 'Трафик выше среднего',
+  fingerprint_cluster: 'Одно устройство в нескольких аккаунтах',
+  fingerprint_match: 'Совпадение устройства с другим аккаунтом',
+  shared_ip_cluster: 'Общий IP с несколькими аккаунтами',
+  simultaneous_distinct_networks: 'Одновременно из разных провайдеров',
+  extracted_key_suspected: 'Подозрение на извлечение ключа из приложения',
+  multi_node_simultaneous: 'Одновременно на нескольких серверах',
+  isp_datacenter_heavy: 'Подключение через дата-центр/VPN',
+  isp_mix: 'Смесь домашних и VPN-подключений',
+  behavior_shift: 'Резкое изменение поведения',
+  schedule_pattern: 'Разные провайдеры по расписанию (утро/вечер)',
+  multi_platform_sub: 'Подписка с разных операционных систем',
+  multi_device_sub: 'Много разных приложений обновляют подписку',
+  sub_storm: 'Массовый запрос подписки за короткое время',
+};
 
 const PROVIDERS = {
   openai: {
@@ -232,11 +274,11 @@ async function analyzePayload(settings, data) {
     riskLevel: 'clean | watch | medium | high | critical',
     riskScore: '0-100',
     confidence: '0-100',
-    summary: 'короткий вывод на русском',
-    evidence: ['конкретный агрегированный признак риска'],
-    counterEvidence: ['что может быть нормальным объяснением'],
+    summary: 'короткий понятный вывод на русском без английских терминов',
+    evidence: ['конкретный признак риска простым русским языком с числами'],
+    counterEvidence: ['что может быть нормальным объяснением простыми словами'],
     recommendedAction: 'observe | manual_review | warn_user | restrict_after_review',
-    operatorNote: '1-2 предложения для оператора',
+    operatorNote: '1-2 предложения для оператора простым русским языком',
   };
 
   const messages = [
@@ -244,11 +286,20 @@ async function analyzePayload(settings, data) {
     {
       role: 'user',
       content: [
-        'Проанализируй агрегированные данные мониторинга VPN на риск передачи подписки другим людям.',
-        'Учитывай текущий срез и весь доступный локальный контекст в агрегированном виде: историю IP/ASN/стран, HWID, подписки, связи, инциденты и аудит.',
+        'Проанализируй данные мониторинга VPN на риск передачи подписки другим людям.',
+        'Учитывай все данные: текущие подключения, историю IP/стран/провайдеров, устройства, подписки, связи между аккаунтами, инциденты.',
+        '',
+        'ОБЯЗАТЕЛЬНО: пиши ВСЕ тексты простым понятным русским языком.',
+        'Не используй английские названия сигналов (simultaneous_distinct_networks, multi_node_simultaneous и т.д.) — переводи их на русский.',
+        'Не используй аббревиатуры ASN, HWID, ISP — пиши «провайдер», «устройство», «оператор связи».',
+        'Вместо maxConcurrentIps пиши «максимум одновременных подключений».',
+        'Оператор панели — обычный человек, не программист.',
+        '',
         'Верни строгий JSON по схеме:',
         JSON.stringify(schemaHint),
-        'Не добавляй markdown. Не используй сырые IP/HWID: их нет в данных намеренно.',
+        '',
+        'Не добавляй markdown. Только чистый JSON.',
+        '',
         'Данные:',
         JSON.stringify(data),
       ].join('\n'),
@@ -629,19 +680,17 @@ function safeEventDetail(event) {
 
 function sanitizeSignal(signal) {
   if (!signal || typeof signal !== 'object') return {};
+  const id = String(signal.id || '').slice(0, 80);
   return {
-    id: String(signal.id || '').slice(0, 80),
+    id,
+    name: SIGNAL_NAMES_RU[id] || id,
     category: String(signal.category || '').slice(0, 40),
     points: Number(signal.points || 0),
-    reason: redactSensitiveTokens(String(signal.reason || signal.text || '').slice(0, 220)),
+    reason: String(signal.reason || signal.text || '').slice(0, 220),
   };
 }
 
-function redactSensitiveTokens(text) {
-  return String(text || '')
-    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]')
-    .replace(/\b[0-9a-f]{16,}\b/gi, '[id]');
-}
+// Данные передаются ИИ как есть, без обезличивания
 
 function buildSuspectsPayload(state, limit) {
   const detection = state.detection || {};
@@ -673,27 +722,7 @@ function findUserByAnyKey(state, rawKey) {
   return (state.users || []).find((user) => getUserAliases(user).includes(target)) || null;
 }
 
-function getUserKey(user) {
-  if (!user) return '';
-  return String(user.userUuid || user.uuid || user.id || user.userId || user.username || user.name || '');
-}
-
-function getUserAliases(user) {
-  if (!user) return [];
-  return Array.from(new Set([
-    getUserKey(user),
-    user.userUuid,
-    user.uuid,
-    user.id,
-    user.userId,
-    user.shortUuid,
-    user.shortUserUuid,
-    user.username,
-    user.name,
-  ]
-    .filter((value) => value !== null && value !== undefined && value !== '')
-    .map(String)));
-}
+// getUserKey и getUserAliases импортированы из utils.js
 
 function findDetectionForUser(state, aliases) {
   const detection = state.detection || {};
