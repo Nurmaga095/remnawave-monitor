@@ -3787,27 +3787,8 @@ function getSuspects() {
       });
     }
   }
-  // 3. Серверная детекция observed (warning) — тоже показываем
-  if (state.detection && Array.isArray(state.detection.observed)) {
-    for (const serverObserved of state.detection.observed) {
-      const sKey = serverObserved.key;
-      if (!sKey || seen.has(sKey)) continue;
-      const u = state.users.find(usr => getUserAliases(usr).includes(sKey));
-      seen.add(sKey);
-      result.push({
-        ...(u || { username: serverObserved.username || sKey }),
-        _riskScore: serverObserved.riskScore || 0,
-        _reason: serverObserved.reason || 'server_observed',
-        _serverLevel: serverObserved.riskLevel,
-        _serverSignals: serverObserved.signals,
-        _hwidCount: serverObserved.hwidCount || (u ? hwidCountForUser(u) : 0),
-        _hwidLimit: serverObserved.hwidLimit || (u ? getUserHwidLimit(u) : 0),
-        _excess: serverObserved.excess || 0,
-        _confidence: serverObserved.confidence || 0,
-        _mitigating: serverObserved.mitigating || [],
-      });
-    }
-  }
+  // 3. Серверная детекция observed (warning) — НЕ добавляем в подозрительные.
+  // Они показываются как "наблюдение" в карточках сессий через isUnderObservation().
 
   // Сортируем по риску (самые опасные — наверху)
   return result.sort((a, b) => (b._riskScore || b._excess || b._ipCount || 0) - (a._riskScore || a._excess || a._ipCount || 0));
