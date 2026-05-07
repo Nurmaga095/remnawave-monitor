@@ -1630,15 +1630,23 @@ function renderDashboard() {
     `;
   }
 
-  // Anomalies preview
+  // Anomalies preview — только подозрительные (high/critical), без observed
+  const anomSection = document.getElementById('anomalies-section');
   const anomEl = document.getElementById('anomalies-list');
-  if (suspects.length === 0) {
-    anomEl.innerHTML = `<div class="empty-state">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>
-      </svg><p>Аномалий не обнаружено</p></div>`;
+  // Фильтруем: только suspects (high/critical с сервера или HWID-превышение)
+  const realSuspects = suspects.filter(s => {
+    // HWID превышение — всегда suspect
+    if (s._reason === 'hwid_over_limit') return true;
+    // Серверная детекция high/critical
+    const level = s._serverLevel || '';
+    if (level === 'high' || level === 'critical') return true;
+    return false;
+  });
+  if (realSuspects.length === 0) {
+    anomSection.style.display = 'none';
   } else {
-    anomEl.innerHTML = suspectTableHtml(suspects.slice(0, 6));
+    anomSection.style.display = '';
+    anomEl.innerHTML = suspectTableHtml(realSuspects.slice(0, 6));
   }
 
   // Connection map
