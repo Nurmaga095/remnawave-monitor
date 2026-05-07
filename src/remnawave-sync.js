@@ -418,7 +418,7 @@ function createRemnawaveSync(options) {
 
   async function fetchHwidTop(warnings) {
     try {
-      const hwidRaw = await api('GET', '/api/hwid/devices/top-users?limit=50');
+      const hwidRaw = await api('GET', '/api/hwid/devices/top-users?limit=200');
       return extractArray(hwidRaw, ['users', 'topUsers']);
     } catch (e) {
       warnings.push(`[hwid-top] ${e.message}`);
@@ -428,7 +428,17 @@ function createRemnawaveSync(options) {
 
   async function fetchHwidDevices(hwidTop, users, activeIps, warnings) {
     const devicesByUser = {};
-    const candidates = buildHwidDeviceCandidates(hwidTop, users, activeIps)
+    // Пользователи с открытыми инцидентами тоже должны проверяться
+    const incidentUsers = [];
+    try {
+      const incidents = store.getIncidents ? store.getIncidents(500) : [];
+      for (const inc of incidents) {
+        if (['resolved', 'false_positive', 'banned'].includes(inc.status)) continue;
+        const u = users.find(usr => userAliases(usr).includes(inc.userKey));
+        if (u) incidentUsers.push(u);
+      }
+    } catch (e) { /* ignore */ }
+    const candidates = buildHwidDeviceCandidates(hwidTop, users, activeIps, incidentUsers)
       .slice(0, hwidDetailsLimit);
 
     await runLimited(candidates, hwidDetailsConcurrency, async (candidate) => {
@@ -447,7 +457,7 @@ function createRemnawaveSync(options) {
     return devicesByUser;
   }
 
-  function buildHwidDeviceCandidates(hwidTop, users, activeIps) {
+  function buildHwidDeviceCandidates(hwidTop, users, activeIps, incidentUsers = []) {
     const userLookup = buildUserLookup(users);
     const byUuid = new Map();
 
@@ -477,6 +487,11 @@ function createRemnawaveSync(options) {
     for (const key of Object.keys(activeIps || {})) {
       const user = userLookup.get(String(key)) || { uuid: key, id: key };
       addCandidate(user, [key]);
+    }
+
+    // Пользователи с открытыми инцидентами — обязательно проверяем HWID
+    for (const user of incidentUsers) {
+      addCandidate(user);
     }
 
     return Array.from(byUuid.values())
