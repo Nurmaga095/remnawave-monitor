@@ -2901,6 +2901,23 @@ function userCardHtml(u) {
       const titleText = signalTitles[s.id] || s.reason || s.id;
       const detailText = s.reason || '';
 
+      // Извлечь имена связанных аккаунтов из linkedAccounts или reason
+      let linkedNames = [];
+      if (Array.isArray(s.linkedAccounts) && s.linkedAccounts.length > 0) {
+        linkedNames = s.linkedAccounts;
+      } else if ((s.id === 'fingerprint_match' || s.id === 'fingerprint_cluster') && detailText) {
+        // Парсим из reason: "общий HWID с аккаунтом: user_123" или "HWID совпадает с 2 аккаунтами: user1, user2"
+        const m = detailText.match(/:\s*(.+)$/);
+        if (m) linkedNames = m[1].split(/,\s*/).map(n => n.trim()).filter(Boolean);
+      }
+
+      const linkedHtml = linkedNames.length > 0
+        ? `<div class="signal-linked">${linkedNames.map(name =>
+            `<button class="signal-linked-btn" onclick="event.stopPropagation();openUserByName('${esc(name)}')" title="Открыть карточку ${esc(name)}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              ${esc(name)}
+            </button>`).join('')}</div>` : '';
+
       return `<div class="signal-card signal-card-${cat}">
         <div class="signal-card-head">
           <span class="signal-cat">${catLabel}</span>
@@ -2908,10 +2925,7 @@ function userCardHtml(u) {
           ${s.points > 0 ? `<span class="signal-pts">+${s.points}</span>` : ''}
         </div>
         ${detailText && detailText !== titleText ? `<div class="signal-card-detail">${esc(detailText)}</div>` : ''}
-        ${Array.isArray(s.linkedAccounts) && s.linkedAccounts.length > 0 ? `<div class="signal-linked">
-          <span class="signal-linked-label">Совпадает с:</span>
-          ${s.linkedAccounts.map(name => `<span class="signal-linked-name" onclick="openUserByName('${esc(name)}')" title="Открыть профиль">${esc(name)}</span>`).join('')}
-        </div>` : ''}
+        ${linkedHtml}
       </div>`;
     }).join('');
     signalsHtml = `<div class="uc-section">
