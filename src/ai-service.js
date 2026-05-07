@@ -51,7 +51,7 @@ const DEFAULT_SETTINGS = {
   baseUrl: PROVIDERS.openai.defaultBaseUrl,
   apiKey: '',
   temperature: 0.2,
-  maxTokens: 900,
+  maxTokens: 3000,
   timeoutSeconds: 30,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
 };
@@ -177,7 +177,7 @@ function normalizeSettings(input = {}, options = {}) {
   const baseUrl = String(input.baseUrl || providerDef.defaultBaseUrl || '').trim().replace(/\/+$/, '');
   const apiKey = options.keepUnknownKey ? String(input.apiKey || '') : '';
   const temperature = clamp(Number(input.temperature ?? DEFAULT_SETTINGS.temperature), 0, 2);
-  const maxTokens = Math.round(clamp(Number(input.maxTokens || DEFAULT_SETTINGS.maxTokens), 128, 4000));
+  const maxTokens = Math.round(clamp(Number(input.maxTokens || DEFAULT_SETTINGS.maxTokens), 128, 16000));
   const timeoutSeconds = Math.round(clamp(Number(input.timeoutSeconds || DEFAULT_SETTINGS.timeoutSeconds), 5, 120));
   const systemPrompt = String(input.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim().slice(0, 4000);
 
@@ -362,6 +362,13 @@ function extractProviderText(value) {
 }
 
 function providerEmptyResponseError(message, debug) {
+  if (debug && debug.finishReason === 'length') {
+    return new Error([
+      'Провайдер оборвал ответ по лимиту токенов до JSON.',
+      'Увеличьте Max tokens в настройках ИИ или выберите модель без reasoning/thinking.',
+      formatProviderDebug(debug),
+    ].filter(Boolean).join(' '));
+  }
   const suffix = formatProviderDebug(debug);
   const error = new Error(suffix ? `${message}: ${suffix}` : message);
   error.providerDebug = debug;

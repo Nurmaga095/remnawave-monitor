@@ -4854,7 +4854,8 @@ function renderAiSettings() {
 
             <div class="form-group">
               <label for="ai-max-tokens">Max tokens</label>
-              <input type="number" id="ai-max-tokens" value="${escAttr(settings.maxTokens || 900)}" min="128" max="4000" step="64" />
+              <input type="number" id="ai-max-tokens" value="${escAttr(settings.maxTokens || 3000)}" min="128" max="16000" step="128" />
+              <span class="hint">Для reasoning-моделей ставьте 6000–12000, иначе ответ может оборваться до JSON.</span>
             </div>
 
             <div class="form-group">
@@ -4941,7 +4942,7 @@ function readAiSettingsForm() {
     apiKey: document.getElementById('ai-api-key')?.value.trim() || '',
     baseUrl: document.getElementById('ai-base-url')?.value.trim() || '',
     temperature: Number(document.getElementById('ai-temperature')?.value || 0.2),
-    maxTokens: Number(document.getElementById('ai-max-tokens')?.value || 900),
+    maxTokens: Number(document.getElementById('ai-max-tokens')?.value || 3000),
     timeoutSeconds: Number(document.getElementById('ai-timeout')?.value || 30),
     systemPrompt: document.getElementById('ai-system-prompt')?.value.trim() || '',
   };
