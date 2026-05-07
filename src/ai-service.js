@@ -289,10 +289,16 @@ async function callOpenAiCompatible(settings, messages, provider) {
     max_tokens: settings.maxTokens,
   };
   const json = await postJson(url, headers, body, settings.timeoutSeconds);
-  const text = json.choices && json.choices[0] && json.choices[0].message
-    ? String(json.choices[0].message.content || '')
-    : '';
-  if (!text) throw new Error('Провайдер вернул пустой ответ');
+  const choice = json.choices && json.choices[0] ? json.choices[0] : null;
+  const message = choice && choice.message ? choice.message : {};
+  const text = extractProviderText(message.content) ||
+    extractProviderText(choice && choice.text) ||
+    extractProviderText(json.output_text);
+  const refusal = extractProviderText(message.refusal);
+  if (!text && refusal) {
+    throw providerEmptyResponseError('Провайдер отказался отвечать', summarizeOpenAiResponse(json));
+  }
+  if (!text) throw providerEmptyResponseError('Провайдер вернул пустой ответ', summarizeOpenAiResponse(json));
   return { text, usage: json.usage || null };
 }
 
@@ -314,10 +320,8 @@ async function callAnthropic(settings, messages) {
     'x-api-key': settings.apiKey,
     'anthropic-version': '2023-06-01',
   }, body, settings.timeoutSeconds);
-  const text = Array.isArray(json.content)
-    ? json.content.map((part) => part && part.text).filter(Boolean).join('\n')
-    : '';
-  if (!text) throw new Error('Провайдер вернул пустой ответ');
+  const text = extractProviderText(json.content);
+  if (!text) throw providerEmptyResponseError('Провайдер вернул пустой ответ', summarizeAnthropicResponse(json));
   return { text, usage: json.usage || null };
 }
 
@@ -338,9 +342,72 @@ async function callGoogle(settings, messages) {
   const parts = json.candidates && json.candidates[0] && json.candidates[0].content
     ? json.candidates[0].content.parts || []
     : [];
-  const resultText = parts.map((part) => part.text).filter(Boolean).join('\n');
-  if (!resultText) throw new Error('Провайдер вернул пустой ответ');
+  const resultText = extractProviderText(parts);
+  if (!resultText) throw providerEmptyResponseError('Провайдер вернул пустой ответ', summarizeGoogleResponse(json));
   return { text: resultText, usage: json.usageMetadata || null };
+}
+
+function extractProviderText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(extractProviderText).filter(Boolean).join('\n').trim();
+  if (typeof value !== 'object') return '';
+
+  return extractProviderText(value.text) ||
+    extractProviderText(value.output_text) ||
+    extractProviderText(value.content) ||
+    extractProviderText(value.value) ||
+    extractProviderText(value.message);
+}
+
+function providerEmptyResponseError(message, debug) {
+  const suffix = formatProviderDebug(debug);
+  const error = new Error(suffix ? `${message}: ${suffix}` : message);
+  error.providerDebug = debug;
+  return error;
+}
+
+function formatProviderDebug(debug) {
+  if (!debug || typeof debug !== 'object') return '';
+  return Object.entries(debug)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(',') : value}`)
+    .join(', ')
+    .slice(0, 500);
+}
+
+function summarizeOpenAiResponse(json) {
+  const choice = json && json.choices && json.choices[0] ? json.choices[0] : null;
+  const message = choice && choice.message ? choice.message : {};
+  return {
+    format: 'chat.completions',
+    choices: Array.isArray(json && json.choices) ? json.choices.length : 0,
+    finishReason: choice && (choice.finish_reason || choice.finishReason),
+    messageKeys: message && typeof message === 'object' ? Object.keys(message).slice(0, 10) : [],
+    refusal: extractProviderText(message.refusal).slice(0, 120),
+  };
+}
+
+function summarizeAnthropicResponse(json) {
+  return {
+    format: 'anthropic.messages',
+    stopReason: json && json.stop_reason,
+    contentTypes: Array.isArray(json && json.content)
+      ? json.content.map((part) => part && part.type).filter(Boolean).slice(0, 10)
+      : [],
+  };
+}
+
+function summarizeGoogleResponse(json) {
+  const candidate = json && json.candidates && json.candidates[0] ? json.candidates[0] : null;
+  return {
+    format: 'google.generateContent',
+    candidates: Array.isArray(json && json.candidates) ? json.candidates.length : 0,
+    finishReason: candidate && candidate.finishReason,
+    blockReason: json && json.promptFeedback && json.promptFeedback.blockReason,
+    partCount: candidate && candidate.content && Array.isArray(candidate.content.parts) ? candidate.content.parts.length : 0,
+  };
 }
 
 async function postJson(url, headers, body, timeoutSeconds) {
