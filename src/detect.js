@@ -59,6 +59,7 @@ function createDetector(options = {}) {
         excess: Math.max(0, hwidCountForUser(u, state) - getUserHwidLimit(u)),
         signals: signals.filter(s => s.active).map(s => ({
           id: s.id, category: s.category, points: s.points, reason: s.reason,
+          ...(s.linkedAccounts ? { linkedAccounts: s.linkedAccounts } : {}),
         })),
         context,
       };

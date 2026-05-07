@@ -3818,9 +3818,9 @@ function isSuspicious(u) {
   const hwidLimit    = getUserHwidLimit(u);
   // Единственный критерий: HWID over limit (deterministic)
   if (devicesCount > hwidLimit) return true;
-  // Серверная детекция: critical
+  // Серверная детекция: critical или high
   const serverResult = getServerDetectionForUser(u);
-  if (serverResult && serverResult.riskLevel === 'critical') return true;
+  if (serverResult && (serverResult.riskLevel === 'critical' || serverResult.riskLevel === 'high')) return true;
   return false;
 }
 
