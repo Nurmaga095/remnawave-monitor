@@ -115,6 +115,7 @@ let state = {
   ipStats: {},         // userKey -> агрегаты IP/ASN/стран за 24 часа
   hwidChurn: {},       // userKey -> количество уникальных HWID за 30 дней
   trafficMedian: 0,    // медианный трафик всех пользователей
+  remnawaveExtra: null,
   suspectStreak: {},   // userKey -> {hits, total} — сколько раз замечен
   sessionFilter: 'all',
   sessionSort: 'ip-desc',
@@ -510,8 +511,10 @@ function applyCachedState(snapshot) {
     proxyData: snapshot.proxyData || {},
     nodeMap: snapshot.nodeMap || {},
     nodesInfo: Array.isArray(snapshot.nodesInfo) ? snapshot.nodesInfo : [],
+    remnawaveExtra: snapshot.remnawaveExtra || null,
     subHistory: snapshot.subHistory || {},
   };
+  state.remnawaveExtra = snapshot.remnawaveExtra || null;
   state.ipHistory = (Array.isArray(snapshot.ipHistory) ? snapshot.ipHistory : []).map((snap) => {
     const ips = {};
     for (const [key, values] of Object.entries(snap.ips || {})) {
@@ -1559,12 +1562,18 @@ function renderDashboard() {
   const totalHwid = state.hwidTop.reduce((s, u) => s + (u.devicesCount || u.count || 0), 0);
   const activeSource = getActiveIpsSource();
   const onlineCount = Object.keys(activeSource).length;
+  const totalIps = Object.values(activeSource).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
   const comparison = state.data && state.data.periodComparison;
+  const incidentStats = state.data && state.data.incidentStats || {};
+  const totalTraffic = state.users.reduce((s, u) => s + Number(u.usedTrafficBytes || u.usedTraffic || (u.userTraffic && u.userTraffic.usedTrafficBytes) || 0), 0);
 
   setVal('total-users', users.length);
   setVal('active-sessions', onlineCount);
   setVal('total-hwid', totalHwid);
   setVal('suspects-count', suspects.length);
+  setVal('total-ips', totalIps);
+  setVal('open-incidents', Number(incidentStats.open || 0));
+  setVal('total-traffic', fmtBytes(totalTraffic));
 
   // Sparklines in stat cards
   if (state.data && state.data.activityHistory && state.data.activityHistory.length >= 3) {
@@ -1609,13 +1618,16 @@ function renderDashboard() {
       nodesEl.innerHTML = activeNodes.map(n => {
         const isOnline = n.isConnected === true || n.isNodeOnline === true;
         const users = n.usersOnline || n.usersCount || 0;
+        const ips = n.ipsOnline || 0;
         const trafficUsed = n.trafficUsedBytes || 0;
         const trafficLimit = n.trafficLimitBytes || 0;
         const trafficPct = trafficLimit > 0 ? Math.min(100, trafficUsed / trafficLimit * 100) : 0;
         const trafficWarn = trafficPct > 85;
+        const sys = n.system || {};
+        const versions = n.versions || {};
 
         // Форматируем аптайм
-        const uptimeSec = n.uptime || 0;
+        const uptimeSec = n.uptime || sys.uptime || 0;
         let uptimeStr = '';
         if (uptimeSec > 0) {
           const d = Math.floor(uptimeSec / 86400);
@@ -1638,7 +1650,13 @@ function renderDashboard() {
         const ulSpeed = n.networkUploadSpeed || 0;
 
         // Нагрузка CPU
-        const cpuPct = n.cpuUsage != null ? Number(n.cpuUsage).toFixed(0) : null;
+        const cpuValue = n.cpuUsage ?? sys.cpuUsage ?? sys.cpu_usage ?? null;
+        const cpuPct = cpuValue != null && Number.isFinite(Number(cpuValue)) ? Number(cpuValue).toFixed(0) : null;
+        const ramUsed = n.memoryUsed ?? sys.memoryUsed ?? sys.memory_used ?? null;
+        const ramTotal = n.memoryTotal ?? sys.memoryTotal ?? sys.memory_total ?? null;
+        const ramPct = ramUsed && ramTotal ? Math.min(100, Number(ramUsed) / Number(ramTotal) * 100) : null;
+        const xray = n.xrayVersion || versions.xray || versions.xrayVersion || '';
+        const nodeVersion = versions.node || versions.nodeVersion || n.nodeVersion || '';
 
         // Флаг страны (эмодзи)
         const countryFlag = n.countryCode ? countryToFlag(n.countryCode) : '';
@@ -1659,7 +1677,9 @@ function renderDashboard() {
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               ${users}
             </span>
+            <span class="nd-chip" title="IP онлайн">${ips} IP</span>
             ${cpuPct !== null ? `<span class="nd-chip ${Number(cpuPct) > 80 ? 'nd-chip-warn' : ''}" title="Нагрузка CPU">⚡ ${cpuPct}%</span>` : ''}
+            ${ramPct !== null ? `<span class="nd-chip ${ramPct > 85 ? 'nd-chip-warn' : ''}" title="RAM">${ramPct.toFixed(0)}% RAM</span>` : ''}
             <span class="nd-chip nd-traffic ${trafficWarn ? 'nd-chip-warn' : ''}" title="Трафик">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               ${fmtBytes(trafficUsed)}${trafficLimit > 0 ? ' / ' + fmtBytes(trafficLimit) : ''}
@@ -1670,6 +1690,12 @@ function renderDashboard() {
             </span>` : ''}
             ${uptimeStr ? `<span class="nd-chip nd-uptime" title="Аптайм">⏱ ${uptimeStr}</span>` : ''}
           </div>
+          ${(xray || nodeVersion || n.configProfileUuid || (n.tags && n.tags.length)) ? `<div class="nd-meta">
+            ${xray ? `<code>xray ${esc(xray)}</code>` : ''}
+            ${nodeVersion ? `<code>node ${esc(nodeVersion)}</code>` : ''}
+            ${n.configProfileUuid ? `<code>${esc(shortToken(n.configProfileUuid))}</code>` : ''}
+            ${(n.tags || []).slice(0, 3).map(tag => `<span>${esc(tag.name || tag)}</span>`).join('')}
+          </div>` : ''}
         </div>`;
       }).join('');
     }
@@ -1683,7 +1709,6 @@ function renderDashboard() {
     const wlCount = (d.whitelist || []).length;
     const notesCount = Object.keys(d.userNotes || {}).length;
     const openIncidents = Number(d.incidentStats && d.incidentStats.open || 0);
-    const totalTraffic = state.users.reduce((s, u) => s + Number(u.usedTrafficBytes || u.usedTraffic || (u.userTraffic && u.userTraffic.usedTrafficBytes) || 0), 0);
     mgmtEl.innerHTML = `
       <div class="mgmt-row"><span class="mgmt-icon">${IC.clipboard}</span><span class="mgmt-label">Открытые инциденты</span><span class="mgmt-val ${openIncidents > 0 ? 'mgmt-red' : ''}">${openIncidents}</span></div>
       <div class="mgmt-row"><span class="mgmt-icon">${IC.ban}</span><span class="mgmt-label">Заблокировано</span><span class="mgmt-val ${bannedCount > 0 ? 'mgmt-red' : ''}">${bannedCount}</span></div>
@@ -1692,6 +1717,8 @@ function renderDashboard() {
       <div class="mgmt-row"><span class="mgmt-icon">${IC.chart}</span><span class="mgmt-label">Общий трафик</span><span class="mgmt-val">${fmtBytes(totalTraffic)}</span></div>
     `;
   }
+
+  renderOpsPreviews();
 
   // Anomalies preview — только подозрительные (high/critical), без observed
   const anomSection = document.getElementById('anomalies-section');
@@ -1717,6 +1744,161 @@ function renderDashboard() {
 
   // Activity chart
   renderActivityChart();
+}
+
+function renderOpsPreviews() {
+  const liveEl = document.getElementById('live-sessions-preview');
+  if (liveEl) {
+    const liveUsers = state.users
+      .filter(u => ipCount(u) > 0)
+      .sort((a, b) => {
+        const pa = isSuspicious(a) ? 0 : isUnderObservation(a) ? 1 : 2;
+        const pb = isSuspicious(b) ? 0 : isUnderObservation(b) ? 1 : 2;
+        if (pa !== pb) return pa - pb;
+        return ipCount(b) - ipCount(a);
+      })
+      .slice(0, 8);
+    liveEl.innerHTML = liveUsers.length
+      ? liveUsers.map(u => opsUserRowHtml(u)).join('')
+      : '<div class="empty-state sm"><p>Онлайн-сессий нет</p></div>';
+  }
+
+  const riskEl = document.getElementById('risk-queue-preview');
+  if (riskEl) {
+    const detection = state.detection || {};
+    const queue = [
+      ...(Array.isArray(detection.suspects) ? detection.suspects : []),
+      ...(Array.isArray(detection.observed) ? detection.observed : []),
+    ]
+      .sort((a, b) => Number(b.riskScore || 0) - Number(a.riskScore || 0))
+      .slice(0, 8);
+    riskEl.innerHTML = queue.length
+      ? queue.map(item => opsRiskRowHtml(item)).join('')
+      : '<div class="empty-state sm"><p>Очередь риска пуста</p></div>';
+  }
+
+  renderRemnawaveInventory();
+}
+
+function opsUserRowHtml(u) {
+  const name = u.username || u.name || 'Unknown';
+  const key = getUserKey(u);
+  const ips = getIpDetails(u);
+  const hwid = hwidCountForUser(u);
+  const limit = getUserHwidLimit(u);
+  const serverResult = getServerDetectionForUser(u);
+  const riskScore = serverResult ? Number(serverResult.riskScore || 0) : 0;
+  const tone = isSuspicious(u) ? 'danger' : isUnderObservation(u) ? 'warn' : 'ok';
+  const firstIp = ips[0] || {};
+  const geo = firstIp.geo || {};
+  return `<button class="ops-row ops-row-${tone}" onclick="openUserCard('${escAttr(key)}')">
+    <span class="ops-status-dot"></span>
+    <span class="ops-main">
+      <b>${esc(name)}</b>
+      <code>${esc(firstIp.ip || key)}</code>
+    </span>
+    <span class="ops-meta">${geo.countryCode ? esc(geo.countryCode) + ' · ' : ''}${ips.length} IP</span>
+    <span class="ops-pill">${hwid}/${limit} HWID</span>
+    ${riskScore > 0 ? `<span class="ops-score">${riskScore}</span>` : ''}
+  </button>`;
+}
+
+function opsRiskRowHtml(item) {
+  const key = item.key || item.userKey || '';
+  const user = findUserByAnyKey(key);
+  const name = (user && (user.username || user.name)) || item.username || key || 'Unknown';
+  const level = item.riskLevel || 'warning';
+  const score = Number(item.riskScore || 0);
+  const reason = item.reason || (Array.isArray(item.signals) ? item.signals.map(s => s.id || s.reason).filter(Boolean).join(', ') : '');
+  const tone = level === 'critical' ? 'danger' : level === 'high' ? 'high' : 'warn';
+  return `<button class="ops-row ops-row-${tone}" onclick="openUserCard('${escAttr(key)}')">
+    <span class="ops-status-dot"></span>
+    <span class="ops-main">
+      <b>${esc(name)}</b>
+      <code>${esc(reason || level)}</code>
+    </span>
+    <span class="ops-pill">${esc(riskLabelRu(level))}</span>
+    <span class="ops-score">${score}</span>
+  </button>`;
+}
+
+function renderRemnawaveInventory() {
+  const el = document.getElementById('remnawave-inventory');
+  if (!el) return;
+  const extra = state.remnawaveExtra || (state.data && state.data.remnawaveExtra) || null;
+  const endpoints = extra && extra.endpoints || {};
+  const items = [
+    inventoryItem('Hosts', 'hosts', endpoints.hosts, ['hosts']),
+    inventoryItem('Squads', 'internalSquads', endpoints.internalSquads, ['internalSquads', 'squads']),
+    inventoryItem('External', 'externalSquads', endpoints.externalSquads, ['externalSquads']),
+    inventoryItem('Profiles', 'configProfiles', endpoints.configProfiles, ['configProfiles', 'profiles']),
+    inventoryItem('Inbounds', 'inbounds', endpoints.inbounds, ['inbounds']),
+    inventoryItem('Subscriptions', 'subscriptions', endpoints.subscriptions, ['subscriptions']),
+    inventoryItem('Billing', 'infraNodes', endpoints.infraNodes, ['nodes', 'infraBillingNodes']),
+    inventoryItem('Plugins', 'nodePlugins', endpoints.nodePlugins, ['plugins', 'nodePlugins']),
+  ];
+  const availableCount = extra && Array.isArray(extra.available) ? extra.available.length : 0;
+  setVal('remnawave-extra-count', availableCount);
+
+  if (!extra || availableCount === 0) {
+    el.innerHTML = '<div class="empty-state sm"><p>Дополнительные данные появятся после следующего успешного sync</p></div>';
+    return;
+  }
+
+  const recap = endpointData(endpoints.systemRecap);
+  const version = getNested(recap, ['response', 'version']) || getNested(recap, ['version'])
+    || getNested(endpointData(endpoints.systemHealth), ['response', 'version'])
+    || '';
+  const unavailable = Array.isArray(extra.unavailable) ? extra.unavailable.length : 0;
+  el.innerHTML = `
+    ${version ? `<div class="inventory-wide"><span>Версия панели</span><b>${esc(version)}</b></div>` : ''}
+    ${items.map(item => `<div class="inventory-item">
+      <span>${esc(item.label)}</span>
+      <b>${item.count}</b>
+      <code>${esc(item.path || 'нет данных')}</code>
+    </div>`).join('')}
+    <div class="inventory-wide inventory-muted"><span>Endpoint'ы</span><b>${availableCount} ok / ${unavailable} skip</b></div>
+  `;
+}
+
+function inventoryItem(label, key, endpoint, hints) {
+  const data = endpointData(endpoint);
+  return {
+    label,
+    key,
+    path: endpoint && endpoint.path,
+    count: countEndpointItems(data, hints),
+  };
+}
+
+function endpointData(endpoint) {
+  return endpoint && endpoint.data ? endpoint.data : {};
+}
+
+function countEndpointItems(data, hints = []) {
+  const list = extractArray(data, hints);
+  if (list.length > 0) return list.length;
+  const response = data && data.response;
+  if (response && typeof response === 'object') {
+    for (const value of Object.values(response)) {
+      if (Array.isArray(value)) return value.length;
+      if (value && typeof value === 'object') {
+        const nested = Object.values(value).find(Array.isArray);
+        if (nested) return nested.length;
+      }
+    }
+  }
+  if (data && typeof data === 'object' && Object.keys(data).length > 0) return 1;
+  return 0;
+}
+
+function getNested(obj, keys) {
+  let current = obj;
+  for (const key of keys) {
+    if (!current || typeof current !== 'object') return null;
+    current = current[key];
+  }
+  return current == null ? null : current;
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────

@@ -311,6 +311,50 @@
               <div class="stat-label">Подозрительных</div>
             </div>
           </div>
+
+          <div class="stat-card" id="stat-total-ips">
+            <div class="stat-icon ip-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M2 12h20"></path>
+                <path d="M12 2a15.3 15.3 0 0 1 0 20"></path>
+                <path d="M12 2a15.3 15.3 0 0 0 0 20"></path>
+              </svg>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="total-ips">—</div>
+              <div class="stat-label">IP в окне: <span data-online-window-label>Сейчас</span></div>
+            </div>
+          </div>
+
+          <div class="stat-card" id="stat-open-incidents">
+            <div class="stat-icon incident-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 6h13"></path>
+                <path d="M8 12h13"></path>
+                <path d="M8 18h13"></path>
+                <path d="M3 6h.01"></path>
+                <path d="M3 12h.01"></path>
+                <path d="M3 18h.01"></path>
+              </svg>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="open-incidents">—</div>
+              <div class="stat-label">Открытые инциденты</div>
+            </div>
+          </div>
+
+          <div class="stat-card" id="stat-total-traffic">
+            <div class="stat-icon traffic-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12h4l3 8 4-16 3 8h4"></path>
+              </svg>
+            </div>
+            <div class="stat-info">
+              <div class="stat-value" id="total-traffic">—</div>
+              <div class="stat-label">Общий трафик</div>
+            </div>
+          </div>
         </div>
 
         <!-- Сводные виджеты -->
@@ -327,6 +371,39 @@
               <h3>Управление</h3>
             </div>
             <div id="mgmt-stats" class="mgmt-stats"></div>
+          </div>
+        </div>
+
+        <div class="dashboard-ops-grid">
+          <div class="panel-section ops-panel ops-live">
+            <div class="section-header">
+              <div>
+                <h3>Живые сессии</h3>
+                <p class="section-subtitle">пользователи онлайн, IP, HWID и риск</p>
+              </div>
+              <button class="btn-sm" onclick="showTab('sessions')">Все</button>
+            </div>
+            <div id="live-sessions-preview" class="ops-list"></div>
+          </div>
+          <div class="panel-section ops-panel ops-risk">
+            <div class="section-header">
+              <div>
+                <h3>Очередь риска</h3>
+                <p class="section-subtitle">критичные и наблюдение</p>
+              </div>
+              <button class="btn-sm" onclick="showTab('incidents')">Инциденты</button>
+            </div>
+            <div id="risk-queue-preview" class="ops-list"></div>
+          </div>
+          <div class="panel-section ops-panel ops-inventory">
+            <div class="section-header">
+              <div>
+                <h3>Remnawave inventory</h3>
+                <p class="section-subtitle">hosts, squads, profiles, settings, billing</p>
+              </div>
+              <span class="section-badge" id="remnawave-extra-count">0</span>
+            </div>
+            <div id="remnawave-inventory" class="inventory-grid"></div>
           </div>
         </div>
 

@@ -137,6 +137,8 @@ function createRemnawaveSync(options) {
         console.error('[sub-history] error:', subErr.message);
       }
 
+      const remnawaveExtra = await fetchRemnawaveExtra(warnings);
+
       store.saveSnapshot({
         ts: Date.now(),
         users,
@@ -146,6 +148,7 @@ function createRemnawaveSync(options) {
         proxyData,
         nodeMap,
         nodesInfo,
+        remnawaveExtra,
         warnings,
       });
 
@@ -357,11 +360,20 @@ function createRemnawaveSync(options) {
         usersOnline: nUuid ? (nodeUserSets[nUuid] ? nodeUserSets[nUuid].size : 0) : 0,
         ipsOnline: nUuid ? (nodeIpSets[nUuid] ? nodeIpSets[nUuid].size : 0) : 0,
         countryCode: node.countryCode || node.country_code || '',
+        providerUuid: node.providerUuid ?? node.provider_uuid ?? null,
+        activePluginUuid: node.activePluginUuid ?? node.active_plugin_uuid ?? null,
+        configProfileUuid: node.configProfileUuid ?? node.config_profile_uuid ?? null,
+        tags: Array.isArray(node.tags) ? node.tags : [],
+        viewPosition: node.viewPosition ?? node.view_position ?? null,
+        raw: node,
         // Расширенные данные
         cpuCount: node.cpuCount ?? node.cpu_count ?? null,
         cpuUsage: node.cpuUsage ?? node.cpu_usage ?? null,
+        cpuModel: node.cpuModel ?? node.cpu_model ?? null,
         memoryTotal: node.memoryTotal ?? null,
         memoryUsed: node.memoryUsed ?? null,
+        system: node.system ?? null,
+        versions: node.versions ?? null,
         uptime: node.uptime ?? null,
         networkDownload: node.networkDownload ?? node.download ?? null,
         networkUpload: node.networkUpload ?? node.upload ?? null,
@@ -375,6 +387,64 @@ function createRemnawaveSync(options) {
     });
 
     return { activeIps, nodeMap, nodesInfo };
+  }
+
+  async function fetchRemnawaveExtra(warnings) {
+    const endpoints = [
+      { key: 'systemRecap', path: '/api/system/stats/recap' },
+      { key: 'systemStats', path: '/api/system/stats' },
+      { key: 'systemHealth', path: '/api/system/health' },
+      { key: 'systemStatus', path: '/api/system/status' },
+      { key: 'systemMetadata', path: '/api/system/metadata' },
+      { key: 'hosts', path: '/api/hosts' },
+      { key: 'hostTags', path: '/api/hosts/tags' },
+      { key: 'internalSquads', path: '/api/internal-squads' },
+      { key: 'externalSquads', path: '/api/external-squads' },
+      { key: 'configProfiles', path: '/api/config-profiles' },
+      { key: 'inbounds', path: '/api/inbounds' },
+      { key: 'subscriptions', path: '/api/subscriptions' },
+      { key: 'subscriptionSettings', path: '/api/subscription-settings' },
+      { key: 'subscriptionPageConfigs', path: '/api/subscription-page-configs' },
+      { key: 'bandwidthNodes', path: '/api/bandwidth-stats/nodes' },
+      { key: 'infraProviders', path: '/api/infra-billing/providers' },
+      { key: 'infraNodes', path: '/api/infra-billing/nodes' },
+      { key: 'infraHistory', path: '/api/infra-billing/history' },
+      { key: 'snippets', path: '/api/snippets' },
+      { key: 'nodePlugins', path: '/api/node-plugins' },
+      { key: 'torrentStats', path: '/api/node-plugins/torrent-blocker/stats' },
+    ];
+
+    const result = {
+      fetchedAt: Date.now(),
+      endpoints: {},
+      available: [],
+      unavailable: [],
+    };
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await request('GET', endpoint.path, null, { allow404: true });
+        if (response.statusCode === 404) {
+          result.unavailable.push({ key: endpoint.key, path: endpoint.path, status: 404 });
+          continue;
+        }
+        result.endpoints[endpoint.key] = {
+          path: endpoint.path,
+          status: response.statusCode,
+          data: response.json || {},
+        };
+        result.available.push(endpoint.key);
+      } catch (e) {
+        result.unavailable.push({ key: endpoint.key, path: endpoint.path, error: e.message });
+      }
+    }
+
+    const failed = result.unavailable.filter((item) => item.status !== 404);
+    if (failed.length > 0) {
+      warnings.push(`remnawave-extra: ${failed.length} endpoint(s) failed`);
+    }
+
+    return result;
   }
 
   async function enrichActiveIpGeo(activeIps, warnings) {

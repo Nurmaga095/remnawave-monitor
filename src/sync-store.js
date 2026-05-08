@@ -408,6 +408,10 @@ function createStore(options = {}) {
       setMeta('nodes_info', snapshot.nodesInfo);
     }
 
+    if (snapshot.remnawaveExtra && typeof snapshot.remnawaveExtra === 'object') {
+      setMeta('remnawave_extra', snapshot.remnawaveExtra);
+    }
+
     setMeta('last_snapshot', {
       ts,
       userCount: users.length,
@@ -540,6 +544,7 @@ function createStore(options = {}) {
       proxyData: ipChecker.getAllCached(),
       nodeMap: getMeta('node_map', {}),
       nodesInfo: getMeta('nodes_info', []),
+      remnawaveExtra: getMeta('remnawave_extra', null),
       subHistory: getSubHistoryGrouped(),
     };
   }
