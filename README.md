@@ -160,6 +160,8 @@ REMNAWAVE_API_TOKEN=ваш-api-токен-remnawave
 
 # Опционально: Telegram-предупреждения
 TELEGRAM_BOT_TOKEN=токен-вашего-бота
+TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_TOPIC_ID=12345
 ```
 
 ### Запуск
@@ -268,6 +270,8 @@ sudo journalctl -u remnawave-monitor -n 30 --no-pager
 | `REMNAWAVE_BASE_URL` | URL панели Remnawave | — |
 | `REMNAWAVE_API_TOKEN` | API-токен Remnawave | — |
 | `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота для предупреждений | — |
+| `TELEGRAM_CHAT_ID` | Chat ID (куда отправлять уведомления о нарушениях) | — |
+| `TELEGRAM_TOPIC_ID` | Topic ID (message_thread_id) для отправки в топик; если пусто — в общий чат | — |
 
 ### Синхронизация и хранение
 

@@ -537,6 +537,15 @@
               </span>
               <span>Настройка ИИ</span>
             </button>
+            <button class="settings-menu-item" data-settings-section="telegram" onclick="showSettingsSection('telegram')">
+              <span class="settings-menu-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 2L11 13"></path>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </span>
+              <span>Telegram</span>
+            </button>
           </aside>
 
           <section class="settings-content">
@@ -545,6 +554,14 @@
                 <div class="loading-state" style="padding:32px">
                   <div class="spinner-large"></div>
                   <p>Загрузка настроек ИИ...</p>
+                </div>
+              </div>
+            </div>
+            <div id="settings-section-telegram" class="settings-section">
+              <div id="telegram-settings-root">
+                <div class="loading-state" style="padding:32px">
+                  <div class="spinner-large"></div>
+                  <p>Загрузка Telegram-настроек...</p>
                 </div>
               </div>
             </div>

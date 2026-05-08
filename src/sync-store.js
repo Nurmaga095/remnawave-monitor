@@ -1096,14 +1096,15 @@ function createStore(options = {}) {
   }
 
   function syncIncidentsFromDetection(detection) {
-    if (!detection) return;
+    if (!detection) return [];
     const entries = [
       ...(Array.isArray(detection.suspects) ? detection.suspects : []),
       ...(Array.isArray(detection.observed) ? detection.observed : []),
     ];
-    if (entries.length === 0) return;
+    if (entries.length === 0) return [];
 
     const now = Date.now();
+    const changes = [];
     const update = db.prepare(`
       UPDATE incidents
       SET status = ?, risk_level = ?, risk_score = ?, reason = ?, last_seen = ?, updated_at = ?,
@@ -1136,6 +1137,7 @@ function createStore(options = {}) {
             lastSeen: now,
           });
           insertIncidentEvent(id, key, 'incident_opened', 'Инцидент создан системой детекции', { detection: incoming, signals: incoming.signals }, 'new');
+          changes.push({ type: 'opened', userKey: key, entry });
           continue;
         }
 
@@ -1161,7 +1163,10 @@ function createStore(options = {}) {
           existing.id
         );
 
-        if (existing.risk_level !== incoming.riskLevel || Number(existing.risk_score || 0) !== incoming.riskScore) {
+        const riskChanged = existing.risk_level !== incoming.riskLevel || Number(existing.risk_score || 0) !== incoming.riskScore;
+        const reasonChanged = String(existing.reason || '') !== String(incoming.reason || '');
+
+        if (riskChanged) {
           insertIncidentEvent(existing.id, key, 'risk_updated', 'Обновлена оценка риска', {
             previousLevel: existing.risk_level,
             previousScore: existing.risk_score,
@@ -1169,10 +1174,19 @@ function createStore(options = {}) {
             riskScore: incoming.riskScore,
             signals: incoming.signals,
           }, nextStatus);
+          changes.push({ type: 'updated', userKey: key, entry });
+        } else if (reasonChanged) {
+          insertIncidentEvent(existing.id, key, 'reason_updated', 'Обновлены причины нарушения', {
+            previousReason: existing.reason || null,
+            reason: incoming.reason || null,
+            signals: incoming.signals,
+          }, nextStatus);
+          changes.push({ type: 'updated', userKey: key, entry });
         }
       }
     });
     tx();
+    return changes;
   }
 
   function getIncidents(limit = 200) {

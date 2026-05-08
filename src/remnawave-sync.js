@@ -13,6 +13,9 @@ function createRemnawaveSync(options) {
   const ipGeoCacheTtlMs = Number(config.ipGeoCacheTtlDays || 7) * 24 * 60 * 60 * 1000;
   const ipGeoSyncLimit = Number(config.ipGeoSyncLimit || 200);
   const ipGeoConcurrency = Math.max(1, Number(config.ipGeoConcurrency || 4));
+  const telegramBotToken = String(config.telegramBotToken || '').trim();
+  const telegramChatId = String(config.telegramChatId || '').trim();
+  const telegramTopicId = String(config.telegramTopicId || '').trim();
   const pageSize = Number(config.userPageSize || 100);
   const jobTimeoutMs = Number(config.jobTimeoutMs || 15000);
   const detector = createDetector({ hwidFallback: Number(config.hwidFallback || 2) });
@@ -170,7 +173,8 @@ function createRemnawaveSync(options) {
         }
 
         if (store.syncIncidentsFromDetection) {
-          store.syncIncidentsFromDetection(detection);
+          const changes = store.syncIncidentsFromDetection(detection);
+          await notifyTelegramOnIncidentChanges(changes, fullState);
         }
 
         console.log(`[detect] suspects=${detection.suspectsCount}, observed=${detection.observedCount}, in ${detection.durationMs}ms`);
@@ -204,6 +208,214 @@ function createRemnawaveSync(options) {
       store.finishSyncRun(runId, 'error', e.message, nextSyncAt);
       throw e;
     }
+  }
+
+  async function notifyTelegramOnIncidentChanges(changes, fullState) {
+    if (!telegramBotToken || !telegramChatId) return;
+    if (!Array.isArray(changes) || changes.length === 0) return;
+
+    const nodeMap = fullState.nodeMap || {};
+
+    for (const change of changes) {
+      try {
+        const text = buildViolationMessage(change, fullState, nodeMap);
+        if (!text) continue;
+        await sendTelegramMessage(text);
+      } catch (e) {
+        console.error(`[telegram] notify failed: ${e.message}`);
+      }
+    }
+  }
+
+  function buildViolationMessage(change, state, nodeMap) {
+    const entry = change && change.entry;
+    const userKeyValue = change && change.userKey;
+    if (!entry || !userKeyValue) return '';
+
+    const user = findUserByKey(state.users || [], userKeyValue);
+    const username = String(entry.username || (user && (user.username || user.name)) || userKeyValue);
+    const tgId = extractTelegramId(user, username);
+    const description = buildUserDescription(user);
+
+    const ipEntries = collectUserIpEntries(state, user);
+    const uniqueIps = uniqueBy(ipEntries.map(i => i.ip)).slice(0, 20);
+    const ipLimit = Number(entry.context && entry.context.ipCount) || uniqueIps.length || 1;
+    const ipLines = uniqueIps.length > 0
+      ? uniqueIps.map((ip) => {
+        const item = ipEntries.find(x => x.ip === ip) || {};
+        return `   ${ip} - ${item.provider || 'Unknown'}`;
+      })
+      : ['   —'];
+
+    const nodeNames = uniqueBy(ipEntries.map(i => i.nodeUuid).filter(Boolean))
+      .map((uuid) => String(nodeMap[uuid] || uuid));
+    const nodeLine = nodeNames.length ? nodeNames.join(', ') : '—';
+
+    const devices = collectUserDevices(state, user).slice(0, 20);
+    const deviceLimit = Number(entry.hwidLimit || 0) || devices.length || 1;
+    const deviceLines = devices.length ? devices.map(d => `   ${d}`) : ['   —'];
+
+    const reasons = Array.isArray(entry.signals) ? entry.signals : [];
+    const reasonLines = reasons.length
+      ? reasons.slice(0, 12).map((s) => `   • ${s.reason || s.id || '—'}`)
+      : ['   • —'];
+
+    return [
+      '⚠️ Нарушение лимита устройств',
+      '',
+      '🚨 НАРУШИТЕЛЬ ЛИМИТА',
+      '',
+      `📧 Username: ${username}`,
+      `📱 TG ID: ${tgId || ''}`.trimEnd(),
+      `📝 Описание: ${description}`,
+      '',
+      `🌐 IP адресов: ${Math.max(1, uniqueIps.length)}/${Math.max(1, ipLimit)}`,
+      '📍 IP (провайдеры):',
+      ...ipLines,
+      `🖥 Ноды: ${nodeLine}`,
+      '',
+      `📲 Устройства (${Math.max(1, devices.length)}/${Math.max(1, deviceLimit)}):`,
+      ...deviceLines,
+      '',
+      '❗ Причины:',
+      ...reasonLines,
+      '🎯 Действие: ViolationAction.WARN',
+      `📊 Скор: ${Number(entry.riskScore || 0).toFixed(1)}/100`,
+      `🕐 Время (МСК): ${formatMskDate(Date.now())}`,
+    ].join('\n');
+  }
+
+  function sendTelegramMessage(text) {
+    const payload = {
+      chat_id: telegramChatId,
+      text: String(text || ''),
+      disable_web_page_preview: true,
+    };
+    const threadId = Number(telegramTopicId);
+    if (Number.isFinite(threadId) && threadId > 0) payload.message_thread_id = threadId;
+
+    return new Promise((resolve, reject) => {
+      const apiUrl = new URL(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`);
+      const body = JSON.stringify(payload);
+      const req = https.request({
+        protocol: apiUrl.protocol,
+        hostname: apiUrl.hostname,
+        path: apiUrl.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          const json = parseJson(data);
+          if ((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300 && json && json.ok) {
+            resolve();
+            return;
+          }
+          reject(new Error((json && json.description) || `Telegram API HTTP ${res.statusCode || 0}`));
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
+
+  function findUserByKey(users, key) {
+    const value = String(key || '');
+    for (const user of users || []) {
+      if (userAliases(user).includes(value)) return user;
+    }
+    return null;
+  }
+
+  function extractTelegramId(user, fallbackUsername) {
+    if (user && user.telegramId) return String(user.telegramId);
+    const username = String((user && user.username) || fallbackUsername || '');
+    const match = username.match(/^user_(\d+)$/);
+    return match ? match[1] : '';
+  }
+
+  function buildUserDescription(user) {
+    if (!user) return '—';
+    const first = user.firstName || user.firstname || '';
+    const last = user.lastName || user.lastname || '';
+    const tgNick = user.telegramUsername || user.tgUsername || user.usernameTag || '';
+    const fullName = `${first} ${last}`.trim();
+    if (fullName && tgNick) return `Bot user: ${fullName} @${String(tgNick).replace(/^@/, '')}`;
+    if (fullName) return `Bot user: ${fullName}`;
+    if (user.description) return String(user.description);
+    return '—';
+  }
+
+  function collectUserIpEntries(state, user) {
+    const out = [];
+    const activeIps = state.activeIps || {};
+    for (const key of userAliases(user || {})) {
+      const entries = activeIps[key];
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const ip = typeof entry === 'string' ? entry : entry && entry.ip;
+        if (!ip) continue;
+        const geo = typeof entry === 'object' ? entry.geo : null;
+        const org = geo && (geo.org || geo.isp) ? (geo.org || geo.isp) : '';
+        const cc = geo && (geo.countryCode || geo.country_code) ? (geo.countryCode || geo.country_code) : '';
+        const provider = org ? `${org}${cc ? ` (${cc})` : ''}` : 'Unknown';
+        out.push({
+          ip,
+          provider,
+          nodeUuid: typeof entry === 'object' && entry.nodeUuid ? String(entry.nodeUuid) : '',
+        });
+      }
+    }
+    return out;
+  }
+
+  function collectUserDevices(state, user) {
+    const hwidDevices = state.hwidDevices || {};
+    const result = [];
+    for (const key of userAliases(user || {})) {
+      const entries = hwidDevices[key];
+      if (!Array.isArray(entries)) continue;
+      for (const item of entries) {
+        const os = String(item.os || item.platform || '').trim();
+        const ver = String(item.osVersion || item.version || item.appVersion || '').trim();
+        const line = [os, ver].filter(Boolean).join(' ');
+        if (line) result.push(line);
+      }
+    }
+    return uniqueBy(result);
+  }
+
+  function uniqueBy(items) {
+    const seen = new Set();
+    const out = [];
+    for (const item of items || []) {
+      if (seen.has(item)) continue;
+      seen.add(item);
+      out.push(item);
+    }
+    return out;
+  }
+
+  function formatMskDate(ts) {
+    const d = new Date(Number(ts || Date.now()));
+    const parts = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: 'Europe/Moscow',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(d);
+    const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+    return `${map.day}.${map.month}.${map.year} ${map.hour}:${map.minute}:${map.second}`;
   }
   async function fetchSubRequestHistory(warnings) {
     try {
