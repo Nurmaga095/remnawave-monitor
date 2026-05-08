@@ -188,10 +188,11 @@ function createDetector(options = {}) {
       if (!Array.isArray(ips)) continue;
       for (const entry of ips) {
         const geo = (typeof entry === 'object') ? (entry && entry.geo) : null;
-        if (!geo || !geo.city || !geo.lat || !geo.lon) continue;
+        const point = getGeoPoint(geo);
+        if (!geo || !geo.city || !point) continue;
         // Skip cellular — mobile towers often show different cities
         if (geo.connectionType && geo.connectionType.toLowerCase().includes('cellular')) continue;
-        cities.set(geo.city, { lat: geo.lat, lon: geo.lon });
+        cities.set(geo.city, point);
       }
     }
     if (cities.size >= 3) {
@@ -217,8 +218,9 @@ function createDetector(options = {}) {
     // Build geo map from activeIps
     for (const entries of Object.values(state.activeIps || {})) {
       for (const e of entries || []) {
-        if (e && e.ip && e.geo && e.geo.lat && e.geo.lon) {
-          geoByIp[e.ip] = e.geo;
+        if (e && e.ip && e.geo) {
+          const point = getGeoPoint(e.geo);
+          if (point) geoByIp[e.ip] = { ...e.geo, ...point };
         }
       }
     }
@@ -233,7 +235,8 @@ function createDetector(options = {}) {
         let geo = null;
         for (const ip of ips) {
           const g = geoByIp[ip];
-          if (g && g.lat && g.lon) { geo = { ...g, ip }; break; }
+          const point = getGeoPoint(g);
+          if (point) { geo = { ...g, ...point, ip }; break; }
         }
         if (!geo) continue;
         if (prevGeo && snap.ts > prevTs) {
@@ -617,6 +620,14 @@ function createDetector(options = {}) {
   }
 
   // ─── Haversine distance (km) ────────────────────────────────
+  function getGeoPoint(geo) {
+    if (!geo) return null;
+    const lat = Number(geo.lat ?? geo.latitude);
+    const lon = Number(geo.lon ?? geo.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lat, lon };
+  }
+
   function haversine(lat1, lon1, lat2, lon2) {
     const R = 6371;
     const toRad = (d) => d * Math.PI / 180;
@@ -1115,8 +1126,8 @@ function createDetector(options = {}) {
 
   function isUserInactive(u, state) {
     const status = String(u.status || '').toLowerCase();
-    if (status === 'disabled' || status === 'expired' || status === 'limited') return true;
     if (state && getActiveIpKey(u, state)) return false;
+    if (status === 'disabled' || status === 'expired' || status === 'limited') return true;
     const lastOnline = u.onlineAt || u.lastSeen || u.lastConnectedAt || u.updatedAt;
     if (lastOnline) {
       const time = new Date(lastOnline).getTime();

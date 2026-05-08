@@ -507,6 +507,7 @@ function applyCachedState(snapshot) {
     incidents: Array.isArray(snapshot.incidents) ? snapshot.incidents : [],
     incidentStats: snapshot.incidentStats || {},
     relations: snapshot.relations || null,
+    proxyData: snapshot.proxyData || {},
     nodeMap: snapshot.nodeMap || {},
     nodesInfo: Array.isArray(snapshot.nodesInfo) ? snapshot.nodesInfo : [],
     subHistory: snapshot.subHistory || {},
@@ -549,9 +550,11 @@ async function fetchActiveIps() {
   // Строим быстрый индекс: числовой id → uuid пользователя
   const idToUuid = {};
   for (const u of state.users) {
-    const numId = String(u.id || u.userId || '');
-    const uuid  = u.uuid || u.id;
-    if (numId && uuid) idToUuid[numId] = uuid;
+    const canonicalKey = getUserKey(u);
+    for (const rawId of [u.id, u.userId]) {
+      const numId = String(rawId || '');
+      if (numId && canonicalKey) idToUuid[numId] = canonicalKey;
+    }
   }
 
   for (const node of nodes) {
@@ -3686,11 +3689,11 @@ function getUserHwidLimit(u) {
 const INACTIVE_OFFLINE_MS = 7 * 24 * 60 * 60 * 1000;
 function isUserInactive(u) {
   const status = String(u.status || '').toLowerCase();
+  // Если у пользователя есть активные IP — он точно активен
+  if (getActiveIpKey(u)) return false;
   if (status === 'disabled' || status === 'expired' || status === 'limited') {
     return true;
   }
-  // Если у пользователя есть активные IP — он точно активен
-  if (getActiveIpKey(u)) return false;
   const lastOnline = u.onlineAt || u.lastSeen || u.lastConnectedAt || u.updatedAt;
   if (lastOnline) {
     const time = new Date(lastOnline).getTime();
@@ -3704,17 +3707,34 @@ function isUserInactive(u) {
 function getSuspects() {
   const seen   = new Set();
   const result = [];
+  const aliasesFor = (u, extraKey) => new Set([
+    ...getUserAliases(u),
+    extraKey,
+    u && u.key,
+    u && u.userKey,
+  ].filter(value => value !== null && value !== undefined && value !== '').map(String));
+  const alreadySeen = (u, extraKey) => {
+    for (const alias of aliasesFor(u, extraKey)) {
+      if (seen.has(alias)) return true;
+    }
+    return false;
+  };
+  const markSeen = (u, extraKey) => {
+    for (const alias of aliasesFor(u, extraKey)) seen.add(alias);
+  };
 
   // 1. HWID: устройств больше чем лимит
   for (const topUser of state.hwidTop) {
-    const key  = topUser.userUuid || topUser.uuid || topUser.id || topUser.username;
-    if (!key || seen.has(key)) continue;
+    const key = getUserKey(topUser);
+    if (!key) continue;
 
+    const topAliases = getUserAliases(topUser);
     const full = state.users.find(u =>
-      (u.uuid || u.id) === (topUser.userUuid || topUser.uuid || topUser.id) ||
+      getUserAliases(u).some(alias => topAliases.includes(alias)) ||
       u.username === topUser.username
     ) || topUser;
 
+    if (alreadySeen(full, key)) continue;
     if (isUserInactive(full)) continue;
 
     const limit = getUserHwidLimit(full);
@@ -3726,7 +3746,7 @@ function getSuspects() {
 
     if (devicesCount > limit) {
       debugLog(`[Suspect] ${full.username || key}: HWID=${devicesCount} > лимит=${limit}`);
-      seen.add(key);
+      markSeen(full, key);
       result.push({
         ...full,
         _hwidCount: devicesCount,
@@ -3740,15 +3760,15 @@ function getSuspects() {
 
   // Дополнительно: проверяем ВСЕХ активных пользователей с hwidDevices
   for (const u of state.users) {
-    const key = u.uuid || u.id || u.username;
-    if (!key || seen.has(key) || isUserInactive(u)) continue;
+    const key = getUserKey(u);
+    if (!key || alreadySeen(u, key) || isUserInactive(u)) continue;
 
     const devicesCount = hwidCountForUser(u);
     if (devicesCount <= 0) continue;
     const limit = getUserHwidLimit(u);
     if (devicesCount > limit) {
       debugLog(`[Suspect-extra] ${u.username || key}: HWID=${devicesCount} > лимит=${limit}`);
-      seen.add(key);
+      markSeen(u, key);
       result.push({
         ...u,
         _hwidCount: devicesCount,
@@ -3764,15 +3784,16 @@ function getSuspects() {
   if (state.detection && Array.isArray(state.detection.suspects)) {
     for (const serverSuspect of state.detection.suspects) {
       const sKey = serverSuspect.key;
-      if (!sKey || seen.has(sKey)) continue;
+      if (!sKey) continue;
 
       // Пытаемся найти полные данные пользователя
       const u = state.users.find(usr => getUserAliases(usr).includes(sKey));
+      if (alreadySeen(u || serverSuspect, sKey)) continue;
 
       // Серверный suspect ВСЕГДА попадает в список — даже если фронтенд
       // считает его неактивным или не может найти в state.users.
       // Сервер уже проверил активность при детекции.
-      seen.add(sKey);
+      markSeen(u || serverSuspect, sKey);
       result.push({
         ...(u || { username: serverSuspect.username || sKey }),
         _riskScore: serverSuspect.riskScore || 0,

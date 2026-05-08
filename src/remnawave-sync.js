@@ -279,9 +279,11 @@ function createRemnawaveSync(options) {
 
     const idToUuid = {};
     for (const user of users) {
-      const numId = String(user.id || user.userId || '');
-      const uuid = user.uuid || user.id;
-      if (numId && uuid) idToUuid[numId] = String(uuid);
+      const canonicalKey = userKey(user);
+      for (const rawId of [user.id, user.userId]) {
+        const numId = String(rawId || '');
+        if (numId && canonicalKey) idToUuid[numId] = canonicalKey;
+      }
     }
 
     // Статистика по нодам: пользователи и IP
