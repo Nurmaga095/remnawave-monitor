@@ -3107,6 +3107,20 @@ function userCardHtml(u) {
       <div class="signal-cards">${chips}</div>
     </div>`;
 
+    const verdict = serverResult.verdict;
+    if (verdict && verdict.level) {
+      const verdictText = verdict.level === 'confirmed' ? 'нарушение подтверждено'
+        : verdict.level === 'probable' ? 'вероятное нарушение'
+        : 'наблюдение';
+      const verdictColor = verdict.level === 'confirmed' ? 'var(--red)'
+        : verdict.level === 'probable' ? '#f97316'
+        : 'var(--text3)';
+      signalsHtml += `<div class="uc-section">
+        <div class="uc-section-head"><span>Вывод</span><span class="uc-badge" style="background:${verdictColor};color:#fff">${esc(verdictText)}</span></div>
+        ${verdict.reason ? `<div class="confidence-row"><span class="conf-desc">${esc(verdict.reason)}</span></div>` : ''}
+      </div>`;
+    }
+
     // Confidence badge
     const conf = serverResult.confidence;
     if (conf && conf.score > 0) {
@@ -3986,6 +4000,7 @@ function getSuspects() {
         _hwidLimit: serverSuspect.hwidLimit || (u ? getUserHwidLimit(u) : 0),
         _excess: serverSuspect.excess || 0,
         _confidence: serverSuspect.confidence || 0,
+        _verdict: serverSuspect.verdict || null,
         _mitigating: serverSuspect.mitigating || [],
       });
     }
@@ -4707,6 +4722,9 @@ const RULE_FIELDS = [
   { value: 'isProxy', label: 'Есть Proxy', type: 'boolean' },
   { value: 'isTor', label: 'Есть Tor', type: 'boolean' },
   { value: 'isSuspect', label: 'Подозрительный', type: 'boolean' },
+  { value: 'isConfirmedViolation', label: 'Подтверждено', type: 'boolean' },
+  { value: 'isProbableAbuse', label: 'Вероятное нарушение', type: 'boolean' },
+  { value: 'isWatchOnly', label: 'Только наблюдение', type: 'boolean' },
 ];
 
 const RULE_OPS = {

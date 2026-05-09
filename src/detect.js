@@ -44,6 +44,7 @@ function createDetector(options = {}) {
 
       const confidence = computeConfidence(signals, context);
       const mitigating = computeMitigatingFactors(u, state, signals, context);
+      const verdict = classifyVerdict(level, signals, confidence, context);
 
       const entry = {
         key,
@@ -55,6 +56,7 @@ function createDetector(options = {}) {
         riskScore: score,
         riskLevel: level,
         confidence,
+        verdict,
         mitigating,
         excess: Math.max(0, hwidCountForUser(u, state) - getUserHwidLimit(u)),
         signals: signals.filter(s => s.active).map(s => ({
@@ -183,17 +185,13 @@ function createDetector(options = {}) {
   // ─── #4 Multi-City Detection ────────────────────────────────
   function detectMultiCity(u, state, keys) {
     const cities = new Map(); // city -> {lat,lon}
-    for (const key of keys) {
-      const ips = (state.activeIps || {})[key];
-      if (!Array.isArray(ips)) continue;
-      for (const entry of ips) {
-        const geo = (typeof entry === 'object') ? (entry && entry.geo) : null;
-        const point = getGeoPoint(geo);
-        if (!geo || !geo.city || !point) continue;
-        // Skip cellular — mobile towers often show different cities
-        if (geo.connectionType && geo.connectionType.toLowerCase().includes('cellular')) continue;
-        cities.set(geo.city, point);
-      }
+    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+      const geo = getGeoForEntry(entry, state);
+      const point = getGeoPoint(geo);
+      if (!geo || !geo.city || !point) continue;
+      // Skip cellular — mobile towers often show different cities
+      if (geo.connectionType && geo.connectionType.toLowerCase().includes('cellular')) continue;
+      cities.set(geo.city, point);
     }
     if (cities.size >= 3) {
       return { id: 'multi_city_extreme', category: 'strong', active: true, points: 25,
@@ -212,18 +210,8 @@ function createDetector(options = {}) {
 
   // ─── #1 Impossible Travel Detection ─────────────────────────
   function detectImpossibleTravel(u, state, keys) {
-    const history = state.ipHistory || [];
+    const history = getDetectionHistory(state);
     if (history.length < 2) return null;
-    const geoByIp = {};
-    // Build geo map from activeIps
-    for (const entries of Object.values(state.activeIps || {})) {
-      for (const e of entries || []) {
-        if (e && e.ip && e.geo) {
-          const point = getGeoPoint(e.geo);
-          if (point) geoByIp[e.ip] = { ...e.geo, ...point };
-        }
-      }
-    }
     // Check sequential snapshots for this user
     let prevGeo = null, prevTs = 0;
     let maxSpeed = 0, maxDetail = '';
@@ -233,10 +221,10 @@ function createDetector(options = {}) {
         if (!ips || ips.length === 0) continue;
         // Get geo from first IP that has geo data
         let geo = null;
-        for (const ip of ips) {
-          const g = geoByIp[ip];
+        for (const entry of normalizeIpEntries(ips)) {
+          const g = getGeoForEntry(entry, state);
           const point = getGeoPoint(g);
-          if (point) { geo = { ...g, ...point, ip }; break; }
+          if (point) { geo = { ...g, ...point, ip: getEntryIp(entry) }; break; }
         }
         if (!geo) continue;
         if (prevGeo && snap.ts > prevTs) {
@@ -270,17 +258,23 @@ function createDetector(options = {}) {
 
   // ─── #2 Velocity Abuse Detection ────────────────────────────
   function detectVelocityAbuse(u, state) {
-    const traffic = Number(u.usedTrafficBytes || u.usedTraffic || 0);
-    const median = state.trafficMedian || 0;
+    const trafficStats = getTrafficStatsForUser(u, state);
+    const traffic = trafficStats
+      ? Number(trafficStats.delta1h || trafficStats.delta24h || 0)
+      : Number(u.usedTrafficBytes || u.usedTraffic || 0);
+    const median = trafficStats
+      ? Number((trafficStats.delta1h ? state.trafficDeltaMedian1h : state.trafficDeltaMedian24h) || 0)
+      : Number(state.trafficMedian || 0);
     if (median <= 0 || traffic <= 0) return null;
     const ratio = traffic / median;
+    const label = trafficStats ? 'прирост трафика' : 'накопленный трафик';
     if (ratio > 10) {
       return { id: 'velocity_extreme', category: 'strong', active: true, points: 20,
-        reason: `трафик ${(traffic / 1073741824).toFixed(1)} GB — ${ratio.toFixed(0)}x от медианы` };
+        reason: `${label} ${(traffic / 1073741824).toFixed(1)} GB — ${ratio.toFixed(0)}x от медианы` };
     }
     if (ratio > 5) {
       return { id: 'velocity_high', category: 'weak', active: true, points: 10,
-        reason: `трафик ${(traffic / 1073741824).toFixed(1)} GB — ${ratio.toFixed(0)}x от медианы` };
+        reason: `${label} ${(traffic / 1073741824).toFixed(1)} GB — ${ratio.toFixed(0)}x от медианы` };
     }
     return null;
   }
@@ -304,14 +298,9 @@ function createDetector(options = {}) {
 
     // Collect this user's current IPs for shared-IP check
     const userIps = new Set();
-    for (const key of keys) {
-      const ips = (state.activeIps || {})[key];
-      if (Array.isArray(ips)) {
-        for (const entry of ips) {
-          const ip = typeof entry === 'string' ? entry : (entry && entry.ip);
-          if (ip) userIps.add(ip);
-        }
-      }
+    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+      const ip = getEntryIp(entry);
+      if (ip) userIps.add(ip);
     }
 
     // Check other users for same HWID or shared IP
@@ -341,7 +330,8 @@ function createDetector(options = {}) {
       if (keys.includes(otherKey)) continue;
       if (!Array.isArray(ips)) continue;
       for (const entry of ips) {
-        const ip = typeof entry === 'string' ? entry : (entry && entry.ip);
+        if (!isFreshActiveEntry(entry)) continue;
+        const ip = getEntryIp(entry);
         if (ip && userIps.has(ip)) { ipLinked++; break; }
       }
     }
@@ -369,18 +359,14 @@ function createDetector(options = {}) {
   function detectIspAnomaly(u, state, keys) {
     const proxyData = state.proxyData || {};
     let residential = 0, datacenter = 0;
-    for (const key of keys) {
-      const ips = (state.activeIps || {})[key];
-      if (!Array.isArray(ips)) continue;
-      for (const entry of ips) {
-        const ip = typeof entry === 'string' ? entry : (entry && entry.ip);
-        if (!ip) continue;
-        const pd = proxyData[ip];
-        if (pd && (pd.isVPN || pd.isProxy || pd.isTor)) {
-          datacenter++;
-        } else {
-          residential++;
-        }
+    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+      const ip = getEntryIp(entry);
+      if (!ip) continue;
+      const pd = proxyData[ip];
+      if (pd && (pd.isVPN || pd.isProxy || pd.isTor)) {
+        datacenter++;
+      } else {
+        residential++;
       }
     }
     if (datacenter >= 2) {
@@ -397,7 +383,7 @@ function createDetector(options = {}) {
   // ─── #6 Behavioral Shift Detection ──────────────────────────
   function detectBehavioralShift(u, state, activityMap, keys) {
     const userKey = getUserKey(u);
-    const history = state.ipHistory || [];
+    const history = getDetectionHistory(state);
     if (history.length < 6) return null;
     // Count active hours in first and second half
     const mid = Math.floor(history.length / 2);
@@ -427,7 +413,7 @@ function createDetector(options = {}) {
   // Only flags when concurrent ASN count EXCEEDS the user's HWID limit.
   // If user paid for 5 devices, 3 ASNs is normal.
   function detectSimultaneousNetworks(u, state, keys, hwidLimit) {
-    const history = state.ipHistory || [];
+    const history = getDetectionHistory(state);
     if (history.length < 3) return null;
     const geoByIp = state.geoByIp || {};
 
@@ -448,11 +434,10 @@ function createDetector(options = {}) {
       for (const key of keys) {
         const ips = snap.ips && snap.ips[key];
         if (!Array.isArray(ips)) continue;
-        for (const ip of ips) {
+        for (const entry of normalizeIpEntries(ips)) {
           ipCount++;
-          const activeEntries = (state.activeIps || {})[key] || [];
-          const entry = activeEntries.find(e => e && e.ip === ip);
-          const geo = (entry && entry.geo) || geoByIp[ip] || null;
+          const ip = getEntryIp(entry);
+          const geo = getGeoForEntry(entry, state) || geoByIp[ip] || null;
           if (geo) {
             if (geo.asn) asns.add(String(geo.asn));
             if (geo.countryCode) countries.add(geo.countryCode);
@@ -512,33 +497,28 @@ function createDetector(options = {}) {
     const countries = new Set();
     let totalIps = 0;
 
-    for (const key of keys) {
-      const ips = (state.activeIps || {})[key];
-      if (!Array.isArray(ips)) continue;
-      for (const entry of ips) {
-        totalIps++;
-        const geo = (typeof entry === 'object') ? (entry && entry.geo) : null;
-        if (!geo) continue;
-        if (geo.asn) asns.add(String(geo.asn));
-        if (geo.countryCode) countries.add(geo.countryCode);
-      }
+    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+      totalIps++;
+      const geo = getGeoForEntry(entry, state);
+      if (!geo) continue;
+      if (geo.asn) asns.add(String(geo.asn));
+      if (geo.countryCode) countries.add(geo.countryCode);
     }
 
     // Only suspicious if concurrent ASNs EXCEED the device limit
     // AND there are multiple countries (rules out WiFi+mobile+work in same city)
     if (asns.size > hwidLimit && countries.size >= 2 && totalIps > hwidLimit) {
       // Check ipHistory for persistence (not just a momentary blip)
-      const history = state.ipHistory || [];
+      const history = getDetectionHistory(state);
       let multiAsnSnapshots = 0;
       for (const snap of history.slice(-6)) {
         const snapAsns = new Set();
         for (const key of keys) {
           const ips = snap.ips && snap.ips[key];
           if (!Array.isArray(ips)) continue;
-          for (const ip of ips) {
-            const activeEntries = (state.activeIps || {})[key] || [];
-            const entry = activeEntries.find(e => e && e.ip === ip);
-            if (entry && entry.geo && entry.geo.asn) snapAsns.add(String(entry.geo.asn));
+          for (const entry of normalizeIpEntries(ips)) {
+            const geo = getGeoForEntry(entry, state);
+            if (geo && geo.asn) snapAsns.add(String(geo.asn));
           }
         }
         if (snapAsns.size > hwidLimit) multiAsnSnapshots++;
@@ -570,15 +550,12 @@ function createDetector(options = {}) {
     const nodeIps = new Map(); // nodeUuid -> Set of IPs
     const allIps = new Set();
 
-    for (const key of keys) {
-      const ips = (state.activeIps || {})[key];
-      if (!Array.isArray(ips)) continue;
-      for (const entry of ips) {
-        if (!entry || !entry.nodeUuid || !entry.ip) continue;
-        allIps.add(entry.ip);
-        if (!nodeIps.has(entry.nodeUuid)) nodeIps.set(entry.nodeUuid, new Set());
-        nodeIps.get(entry.nodeUuid).add(entry.ip);
-      }
+    const entries = getActiveEntriesForKeys(state, keys, { freshOnly: true });
+    for (const entry of entries) {
+      if (!entry || !entry.nodeUuid || !entry.ip) continue;
+      allIps.add(entry.ip);
+      if (!nodeIps.has(entry.nodeUuid)) nodeIps.set(entry.nodeUuid, new Set());
+      nodeIps.get(entry.nodeUuid).add(entry.ip);
     }
 
     const nodeCount = nodeIps.size;
@@ -589,14 +566,11 @@ function createDetector(options = {}) {
     // Collect country/ASN diversity across nodes
     const nodeCountries = new Set();
     const nodeAsns = new Set();
-    for (const key of keys) {
-      const ips = (state.activeIps || {})[key];
-      if (!Array.isArray(ips)) continue;
-      for (const entry of ips) {
-        if (!entry || !entry.geo) continue;
-        if (entry.geo.countryCode) nodeCountries.add(entry.geo.countryCode);
-        if (entry.geo.asn) nodeAsns.add(String(entry.geo.asn));
-      }
+    for (const entry of entries) {
+      const geo = getGeoForEntry(entry, state);
+      if (!geo) continue;
+      if (geo.countryCode) nodeCountries.add(geo.countryCode);
+      if (geo.asn) nodeAsns.add(String(geo.asn));
     }
 
     // Different countries from different nodes = very strong
@@ -626,6 +600,68 @@ function createDetector(options = {}) {
     const lon = Number(geo.lon ?? geo.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
     return { lat, lon };
+  }
+
+  function getDetectionHistory(state) {
+    return Array.isArray(state.detectionHistory) && state.detectionHistory.length > 0
+      ? state.detectionHistory
+      : (Array.isArray(state.ipHistory) ? state.ipHistory : []);
+  }
+
+  function normalizeIpEntries(value) {
+    if (Array.isArray(value)) return value;
+    if (value && value.size) return Array.from(value);
+    return [];
+  }
+
+  function getEntryIp(entry) {
+    return typeof entry === 'string' ? entry : (entry && entry.ip ? String(entry.ip) : '');
+  }
+
+  function getGeoForEntry(entry, state) {
+    if (!entry) return null;
+    if (typeof entry === 'object' && entry.geo) return entry.geo;
+    const ip = getEntryIp(entry);
+    if (ip && state.geoByIp && state.geoByIp[ip]) return state.geoByIp[ip];
+    if (typeof entry === 'object' && (entry.countryCode || entry.country || entry.asn || entry.city)) {
+      return {
+        countryCode: entry.countryCode || entry.country_code || entry.country || '',
+        country: entry.country || entry.countryCode || entry.country_code || '',
+        asn: entry.asn || '',
+        city: entry.city || '',
+        latitude: entry.latitude ?? entry.lat ?? null,
+        longitude: entry.longitude ?? entry.lon ?? null,
+        connectionType: entry.connectionType || '',
+      };
+    }
+    return null;
+  }
+
+  function isFreshActiveEntry(entry, maxAgeMs = 3 * 60 * 1000) {
+    if (!entry || typeof entry === 'string') return true;
+    if (!entry.lastSeen) return true;
+    const ts = new Date(entry.lastSeen).getTime();
+    return Number.isFinite(ts) && Date.now() - ts <= maxAgeMs;
+  }
+
+  function getActiveEntriesForKeys(state, keys, options = {}) {
+    const entries = [];
+    const seen = new Set();
+    for (const key of keys || []) {
+      const list = state.activeIps && state.activeIps[key];
+      if (!Array.isArray(list)) continue;
+      for (const entry of list) {
+        if (options.freshOnly && !isFreshActiveEntry(entry)) continue;
+        const ip = getEntryIp(entry);
+        if (!ip) continue;
+        const node = typeof entry === 'object' && entry.nodeUuid ? entry.nodeUuid : '';
+        const dedupeKey = options.keepNodeDuplicates ? `${ip}\n${node}` : `${ip}\n${node}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        entries.push(typeof entry === 'string' ? { ip } : entry);
+      }
+    }
+    return entries;
   }
 
   function haversine(lat1, lon1, lat2, lon2) {
@@ -761,6 +797,44 @@ function createDetector(options = {}) {
     return { score, level, types };
   }
 
+  function classifyVerdict(riskLevel, signals, confidence, context) {
+    const active = signals.filter(s => s.active);
+    const ids = new Set(active.map(s => s.id));
+    const confidenceScore = Number(confidence && confidence.score || 0);
+
+    if (ids.has('hwid_over_limit') || ids.has('fingerprint_cluster') || ids.has('fingerprint_match')) {
+      return {
+        level: 'confirmed',
+        label: 'confirmed_violation',
+        reason: 'Есть прямое устройство-доказательство: превышение лимита HWID или один HWID на разных аккаунтах.',
+      };
+    }
+
+    const networkProof = ['extracted_key_suspected', 'simultaneous_distinct_networks', 'multi_node_simultaneous']
+      .filter(id => ids.has(id));
+    if (riskLevel === 'high' && confidenceScore >= 50 && networkProof.length > 0) {
+      return {
+        level: 'probable',
+        label: 'probable_abuse',
+        reason: 'Есть устойчивые сетевые признаки сверх лимита, но без прямого HWID-превышения.',
+      };
+    }
+
+    if (riskLevel === 'high') {
+      return {
+        level: 'probable',
+        label: 'probable_abuse',
+        reason: 'Несколько независимых сигналов риска требуют ручной проверки.',
+      };
+    }
+
+    return {
+      level: 'watch',
+      label: 'watch',
+      reason: 'Недостаточно доказательств для точного обвинения; только наблюдение.',
+    };
+  }
+
   // ─── Mitigating Factors (White Explanations) ──────────────────
   // Shows reasons why the signals might be false positives.
   function computeMitigatingFactors(u, state, signals, context) {
@@ -773,16 +847,12 @@ function createDetector(options = {}) {
     // Check if IPs are from mobile carriers (normal to change IP)
     let mobileIpCount = 0;
     let totalGeoIps = 0;
-    for (const key of keys) {
-      const ips = (state.activeIps || {})[key];
-      if (!Array.isArray(ips)) continue;
-      for (const entry of ips) {
-        const geo = entry && entry.geo;
-        if (!geo) continue;
-        totalGeoIps++;
-        if (geo.connectionType && geo.connectionType.toLowerCase().includes('cell')) {
-          mobileIpCount++;
-        }
+    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+      const geo = getGeoForEntry(entry, state);
+      if (!geo) continue;
+      totalGeoIps++;
+      if (geo.connectionType && geo.connectionType.toLowerCase().includes('cell')) {
+        mobileIpCount++;
       }
     }
 
@@ -849,7 +919,7 @@ function createDetector(options = {}) {
   // Detects recurring daily patterns where different ASNs appear at
   // consistent time slots, suggesting multiple people on a schedule.
   function detectSchedulePattern(u, state, keys, hwidLimit) {
-    const history = state.ipHistory || [];
+    const history = getDetectionHistory(state);
     if (history.length < 20) return null; // need decent history
 
     // Group snapshots by hour-of-day and track which ASNs appear at each hour
@@ -863,13 +933,11 @@ function createDetector(options = {}) {
       for (const key of keys) {
         const ips = snap.ips && snap.ips[key];
         if (!Array.isArray(ips) && !(ips && ips.size)) continue;
-        const ipList = Array.isArray(ips) ? ips : Array.from(ips);
-        for (const ip of ipList) {
-          const activeEntries = (state.activeIps || {})[key] || [];
-          const entry = activeEntries.find(e => e && e.ip === ip);
-          if (entry && entry.geo) {
-            if (entry.geo.asn) hourAsns[hour].add(String(entry.geo.asn));
-            if (entry.geo.countryCode) hourCountries[hour].add(entry.geo.countryCode);
+        for (const entry of normalizeIpEntries(ips)) {
+          const geo = getGeoForEntry(entry, state);
+          if (geo) {
+            if (geo.asn) hourAsns[hour].add(String(geo.asn));
+            if (geo.countryCode) hourCountries[hour].add(geo.countryCode);
           }
         }
       }
@@ -1065,18 +1133,14 @@ function createDetector(options = {}) {
     const asns = new Set();
     const connectionTypes = new Set();
 
-    for (const key of keys) {
-      const ips = (state.activeIps || {})[key];
-      if (!Array.isArray(ips)) continue;
-      ipCount = Math.max(ipCount, ips.length);
-
-      for (const entry of ips) {
-        const geo = (typeof entry === 'string') ? null : (entry && entry.geo);
-        if (!geo) continue;
-        if (geo.countryCode) countries.add(geo.countryCode);
-        if (geo.asn) asns.add(String(geo.asn));
-        if (geo.connectionType) connectionTypes.add(geo.connectionType);
-      }
+    const entries = getActiveEntriesForKeys(state, keys, { freshOnly: true });
+    ipCount = new Set(entries.map(getEntryIp).filter(Boolean)).size;
+    for (const entry of entries) {
+      const geo = getGeoForEntry(entry, state);
+      if (!geo) continue;
+      if (geo.countryCode) countries.add(geo.countryCode);
+      if (geo.asn) asns.add(String(geo.asn));
+      if (geo.connectionType) connectionTypes.add(geo.connectionType);
     }
 
     const stats = getIpStatsForUser(u, state);
@@ -1099,7 +1163,7 @@ function createDetector(options = {}) {
   // ─── Activity Map (temporal 24/7 detection) ─────────────────
   function buildActivityMap(state) {
     const map = {};
-    const history = state.ipHistory || [];
+    const history = getDetectionHistory(state);
     if (history.length < 3) return map;
 
     const userHours = {};
@@ -1147,7 +1211,7 @@ function createDetector(options = {}) {
 
   function getActiveIpKey(u, state) {
     return getUserAliases(u).find(k =>
-      state.activeIps && state.activeIps[k] && state.activeIps[k].length > 0
+      state.activeIps && state.activeIps[k] && state.activeIps[k].some(entry => isFreshActiveEntry(entry))
     ) || '';
   }
 
@@ -1170,6 +1234,14 @@ function createDetector(options = {}) {
       if (state.hwidChurn && state.hwidChurn[key]) return state.hwidChurn[key];
     }
     return 0;
+  }
+
+  function getTrafficStatsForUser(u, state) {
+    const keys = getUserAliases(u);
+    for (const key of keys) {
+      if (state.trafficStats && state.trafficStats[key]) return state.trafficStats[key];
+    }
+    return null;
   }
 
   function hwidCountForUser(u, state) {

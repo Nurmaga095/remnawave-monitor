@@ -48,6 +48,15 @@ function createStore(options = {}) {
       PRIMARY KEY (user_key, ip)
     );
 
+    CREATE TABLE IF NOT EXISTS active_ip_nodes (
+      user_key TEXT NOT NULL,
+      ip TEXT NOT NULL,
+      node_uuid TEXT NOT NULL DEFAULT '',
+      last_seen TEXT,
+      seen_at INTEGER NOT NULL,
+      PRIMARY KEY (user_key, ip, node_uuid)
+    );
+
     CREATE TABLE IF NOT EXISTS ip_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ts INTEGER NOT NULL
@@ -57,6 +66,13 @@ function createStore(options = {}) {
       snapshot_id INTEGER NOT NULL,
       user_key TEXT NOT NULL,
       ip TEXT NOT NULL,
+      country_code TEXT,
+      asn TEXT,
+      city TEXT,
+      latitude REAL,
+      longitude REAL,
+      node_uuid TEXT,
+      last_seen TEXT,
       PRIMARY KEY (snapshot_id, user_key, ip),
       FOREIGN KEY (snapshot_id) REFERENCES ip_snapshots(id) ON DELETE CASCADE
     );
@@ -143,6 +159,13 @@ function createStore(options = {}) {
       suspect_count INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS user_traffic_history (
+      user_key TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      used_bytes INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_key, ts)
+    );
+
     CREATE TABLE IF NOT EXISTS user_notifications (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_key TEXT NOT NULL,
@@ -180,6 +203,7 @@ function createStore(options = {}) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_active_ips_user ON active_ips(user_key);
+    CREATE INDEX IF NOT EXISTS idx_active_ip_nodes_user ON active_ip_nodes(user_key);
     CREATE INDEX IF NOT EXISTS idx_ip_snapshots_ts ON ip_snapshots(ts);
     CREATE INDEX IF NOT EXISTS idx_ip_snapshot_ips_user ON ip_snapshot_ips(user_key);
     CREATE INDEX IF NOT EXISTS idx_ip_geo_cache_updated ON ip_geo_cache(updated_at);
@@ -190,6 +214,8 @@ function createStore(options = {}) {
     CREATE INDEX IF NOT EXISTS idx_device_account_links_hwid ON device_account_links(hwid);
     CREATE INDEX IF NOT EXISTS idx_detection_audit_ts ON detection_audit_log(ts);
     CREATE INDEX IF NOT EXISTS idx_activity_history_ts ON activity_history(ts);
+    CREATE INDEX IF NOT EXISTS idx_user_traffic_history_ts ON user_traffic_history(ts);
+    CREATE INDEX IF NOT EXISTS idx_user_traffic_history_user_ts ON user_traffic_history(user_key, ts);
     CREATE INDEX IF NOT EXISTS idx_user_notifications_user ON user_notifications(user_key);
     CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
     CREATE INDEX IF NOT EXISTS idx_incidents_user ON incidents(user_key);
@@ -265,6 +291,7 @@ function createStore(options = {}) {
 
     db.prepare('DELETE FROM users').run();
     db.prepare('DELETE FROM active_ips').run();
+    db.prepare('DELETE FROM active_ip_nodes').run();
     db.prepare('DELETE FROM hwid_top').run();
     db.prepare('DELETE FROM hwid_devices').run();
 
@@ -283,16 +310,32 @@ function createStore(options = {}) {
         node_uuid = excluded.node_uuid,
         seen_at = excluded.seen_at
     `);
+    const insertActiveIpNode = db.prepare(`
+      INSERT INTO active_ip_nodes (user_key, ip, node_uuid, last_seen, seen_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_key, ip, node_uuid) DO UPDATE SET
+        last_seen = excluded.last_seen,
+        seen_at = excluded.seen_at
+    `);
     for (const [key, ips] of Object.entries(activeIps)) {
       if (!key || !Array.isArray(ips)) continue;
       for (const entry of ips) {
         const ip = typeof entry === 'string' ? entry : entry && entry.ip;
         if (!ip) continue;
+        const lastSeen = typeof entry === 'string' ? null : entry.lastSeen || null;
+        const nodeUuid = typeof entry === 'string' ? null : entry.nodeUuid || null;
         insertActiveIp.run(
           key,
           ip,
-          typeof entry === 'string' ? null : entry.lastSeen || null,
-          typeof entry === 'string' ? null : entry.nodeUuid || null,
+          lastSeen,
+          nodeUuid,
+          ts
+        );
+        insertActiveIpNode.run(
+          key,
+          ip,
+          nodeUuid || '',
+          lastSeen,
           ts
         );
       }
@@ -300,20 +343,41 @@ function createStore(options = {}) {
 
     const snapshotId = db.prepare('INSERT INTO ip_snapshots (ts) VALUES (?)').run(ts).lastInsertRowid;
     const geoByIpForSnapshot = getAllIpGeoCache();
-    const insertSnapshotIp = db.prepare('INSERT OR IGNORE INTO ip_snapshot_ips (snapshot_id, user_key, ip, country_code, asn, city) VALUES (?, ?, ?, ?, ?, ?)');
+    const insertSnapshotIp = db.prepare(`
+      INSERT OR IGNORE INTO ip_snapshot_ips (
+        snapshot_id, user_key, ip, country_code, asn, city, latitude, longitude, node_uuid, last_seen
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
     for (const [key, ips] of Object.entries(activeIps)) {
       if (!key || !Array.isArray(ips)) continue;
       for (const entry of ips) {
         const ip = typeof entry === 'string' ? entry : entry && entry.ip;
         if (!ip) continue;
-        const geo = geoByIpForSnapshot[ip] || null;
+        const geo = (entry && typeof entry === 'object' && entry.geo) || geoByIpForSnapshot[ip] || null;
+        const lat = geo ? firstFiniteNumber(geo.latitude, geo.lat) : null;
+        const lon = geo ? firstFiniteNumber(geo.longitude, geo.lon) : null;
         insertSnapshotIp.run(
           snapshotId, key, ip,
           geo ? (geo.countryCode || geo.country || null) : null,
           geo ? (geo.asn ? String(geo.asn) : null) : null,
           geo ? (geo.city || null) : null,
+          lat,
+          lon,
+          typeof entry === 'string' ? null : entry.nodeUuid || null,
+          typeof entry === 'string' ? null : entry.lastSeen || null,
         );
       }
+    }
+
+    const insertTraffic = db.prepare(`
+      INSERT OR REPLACE INTO user_traffic_history (user_key, ts, used_bytes)
+      VALUES (?, ?, ?)
+    `);
+    for (const user of users) {
+      const key = userKey(user);
+      if (!key) continue;
+      const usedBytes = getTrafficBytesFromUser(user);
+      if (usedBytes > 0) insertTraffic.run(key, ts, usedBytes);
     }
 
     const insertHwidTop = db.prepare(`
@@ -444,27 +508,21 @@ function createStore(options = {}) {
     // Configurable activity history retention
     const activityCutoff = now - activityHistoryRetentionDays * 24 * 60 * 60 * 1000;
     db.prepare('DELETE FROM activity_history WHERE ts < ?').run(activityCutoff);
+    db.prepare('DELETE FROM user_traffic_history WHERE ts < ?').run(activityCutoff);
 
     // Clean expired sessions
     db.prepare('DELETE FROM app_sessions WHERE expires_at < ?').run(now);
   }
 
-  function getState() {
+  function getState(options = {}) {
+    const includeDetectionHistory = Boolean(options && options.includeDetectionHistory);
+    const includeNodeDuplicates = Boolean(options && options.includeNodeDuplicates);
     const users = db.prepare('SELECT raw_json FROM users ORDER BY updated_at DESC').all()
       .map((row) => parseJson(row.raw_json))
       .filter(Boolean);
 
     const geoByIp = getAllIpGeoCache();
-    const activeIps = {};
-    for (const row of db.prepare('SELECT user_key, ip, last_seen, node_uuid FROM active_ips ORDER BY user_key, ip').all()) {
-      if (!activeIps[row.user_key]) activeIps[row.user_key] = [];
-      activeIps[row.user_key].push({
-        ip: row.ip,
-        lastSeen: row.last_seen,
-        nodeUuid: row.node_uuid,
-        geo: geoByIp[row.ip] || null,
-      });
-    }
+    const activeIps = loadActiveIps(geoByIp, includeNodeDuplicates);
     const activeIpWindows = {
       live: activeIps,
       '5': buildAccumulatedActiveIps(geoByIp, activeIps, 5),
@@ -484,20 +542,10 @@ function createStore(options = {}) {
     }
 
     const cutoff = Date.now() - stateHistoryWindowMs;
-    const snapshots = db.prepare('SELECT id, ts FROM ip_snapshots WHERE ts >= ? ORDER BY ts ASC').all(cutoff);
-    const ipHistory = snapshots.map((snapshot) => {
-      const ips = {};
-      const rows = db.prepare('SELECT user_key, ip, country_code, asn, city FROM ip_snapshot_ips WHERE snapshot_id = ? ORDER BY user_key, ip').all(snapshot.id);
-      for (const row of rows) {
-        if (!ips[row.user_key]) ips[row.user_key] = [];
-        ips[row.user_key].push(row.ip);
-        // Backfill geo cache from snapshot data if missing
-        if (row.country_code && !geoByIp[row.ip]) {
-          geoByIp[row.ip] = { countryCode: row.country_code, asn: row.asn, city: row.city };
-        }
-      }
-      return { ts: snapshot.ts, ips };
-    });
+    const ipHistory = buildIpHistory(geoByIp, cutoff, false);
+    const detectionHistory = includeDetectionHistory
+      ? buildIpHistory(geoByIp, Date.now() - ipHistoryRetentionMs, true)
+      : null;
 
     // HWID churn: сколько уникальных HWID у пользователя за 30 дней
     const hwidChurn = {};
@@ -514,6 +562,7 @@ function createStore(options = {}) {
     const trafficMedian = trafficValues.length > 0
       ? trafficValues[Math.floor(trafficValues.length / 2)]
       : 0;
+    const trafficStats = buildTrafficStats();
 
     // Use cached relations if available (computed at saveSnapshot), fallback to compute
     if (!_cachedRelations) {
@@ -528,9 +577,13 @@ function createStore(options = {}) {
       hwidTop,
       hwidDevices,
       ipHistory,
+      ...(includeDetectionHistory ? { detectionHistory } : {}),
       ipStats: buildIpStats(geoByIp, activeIps),
       hwidChurn,
       trafficMedian,
+      trafficStats: trafficStats.byUser,
+      trafficDeltaMedian1h: trafficStats.median1h,
+      trafficDeltaMedian24h: trafficStats.median24h,
       detection: getDetectionResult(),
       sync: getSyncStatus(),
       whitelist: getWhitelist(),
@@ -546,6 +599,108 @@ function createStore(options = {}) {
       nodesInfo: getMeta('nodes_info', []),
       remnawaveExtra: getMeta('remnawave_extra', null),
       subHistory: getSubHistoryGrouped(),
+    };
+  }
+
+  function loadActiveIps(geoByIp, includeNodeDuplicates) {
+    const activeIps = {};
+    const nodeRows = includeNodeDuplicates
+      ? db.prepare('SELECT user_key, ip, last_seen, node_uuid FROM active_ip_nodes ORDER BY user_key, ip, node_uuid').all()
+      : [];
+    const rows = nodeRows.length > 0
+      ? nodeRows
+      : db.prepare('SELECT user_key, ip, last_seen, node_uuid FROM active_ips ORDER BY user_key, ip').all();
+
+    for (const row of rows) {
+      if (!activeIps[row.user_key]) activeIps[row.user_key] = [];
+      activeIps[row.user_key].push({
+        ip: row.ip,
+        lastSeen: row.last_seen,
+        nodeUuid: row.node_uuid || null,
+        geo: geoByIp[row.ip] || null,
+      });
+    }
+    return activeIps;
+  }
+
+  function buildIpHistory(geoByIp, cutoff, detailed) {
+    const snapshots = db.prepare('SELECT id, ts FROM ip_snapshots WHERE ts >= ? ORDER BY ts ASC').all(cutoff);
+    return snapshots.map((snapshot) => {
+      const ips = {};
+      const rows = db.prepare(`
+        SELECT user_key, ip, country_code, asn, city, latitude, longitude, node_uuid, last_seen
+        FROM ip_snapshot_ips
+        WHERE snapshot_id = ?
+        ORDER BY user_key, ip
+      `).all(snapshot.id);
+      for (const row of rows) {
+        if (!ips[row.user_key]) ips[row.user_key] = [];
+        const snapGeo = geoFromSnapshotRow(row);
+        if (snapGeo && !geoByIp[row.ip]) geoByIp[row.ip] = snapGeo;
+        if (detailed) {
+          ips[row.user_key].push({
+            ip: row.ip,
+            lastSeen: row.last_seen || null,
+            nodeUuid: row.node_uuid || null,
+            geo: geoByIp[row.ip] || snapGeo || null,
+          });
+        } else {
+          ips[row.user_key].push(row.ip);
+        }
+      }
+      return { ts: snapshot.ts, ips };
+    });
+  }
+
+  function buildTrafficStats() {
+    const now = Date.now();
+    const cutoff24h = now - 24 * 60 * 60 * 1000;
+    const cutoff1h = now - 60 * 60 * 1000;
+    const rows = db.prepare(`
+      SELECT user_key, ts, used_bytes
+      FROM user_traffic_history
+      WHERE ts >= ?
+      ORDER BY user_key, ts ASC
+    `).all(cutoff24h);
+
+    const groups = {};
+    for (const row of rows) {
+      if (!groups[row.user_key]) groups[row.user_key] = [];
+      groups[row.user_key].push({
+        ts: Number(row.ts || 0),
+        usedBytes: Number(row.used_bytes || 0),
+      });
+    }
+
+    const byUser = {};
+    const deltas1h = [];
+    const deltas24h = [];
+    for (const [key, points] of Object.entries(groups)) {
+      if (points.length < 2) continue;
+      const last = points[points.length - 1];
+      const first24 = points[0];
+      const first1h = points.find(point => point.ts >= cutoff1h) || last;
+      const delta24h = positiveTrafficDelta(first24.usedBytes, last.usedBytes);
+      const delta1h = positiveTrafficDelta(first1h.usedBytes, last.usedBytes);
+      const elapsed1h = Math.max(1, last.ts - first1h.ts);
+      const elapsed24h = Math.max(1, last.ts - first24.ts);
+      byUser[key] = {
+        delta1h,
+        delta24h,
+        rateBytesPerHour1h: Math.round(delta1h * 3600000 / elapsed1h),
+        rateBytesPerHour24h: Math.round(delta24h * 3600000 / elapsed24h),
+        samples: points.length,
+        firstSeenAt: first24.ts,
+        lastSeenAt: last.ts,
+      };
+      if (delta1h > 0) deltas1h.push(delta1h);
+      if (delta24h > 0) deltas24h.push(delta24h);
+    }
+
+    return {
+      byUser,
+      median1h: median(deltas1h),
+      median24h: median(deltas24h),
     };
   }
 
@@ -578,7 +733,7 @@ function createStore(options = {}) {
   function buildAccumulatedActiveIps(geoByIp, liveActiveIps, minutes) {
     const cutoff = Date.now() - Number(minutes || 15) * 60 * 1000;
     const rows = db.prepare(`
-      SELECT s.ts, i.user_key, i.ip
+      SELECT s.ts, i.user_key, i.ip, i.country_code, i.asn, i.city, i.latitude, i.longitude
       FROM ip_snapshot_ips i
       JOIN ip_snapshots s ON s.id = i.snapshot_id
       WHERE s.ts >= ?
@@ -864,7 +1019,7 @@ function createStore(options = {}) {
       item.ips.add(row.ip);
       item.networks.add(ipNetworkKey(row.ip));
 
-      const geo = geoByIp[row.ip];
+      const geo = geoByIp[row.ip] || geoFromSnapshotRow(row);
       if (!geo) continue;
 
       const countryKey = geo.countryCode || geo.country || '';
@@ -1105,7 +1260,11 @@ function createStore(options = {}) {
     const entries = [
       ...(Array.isArray(detection.suspects) ? detection.suspects : []),
       ...(Array.isArray(detection.observed) ? detection.observed : []),
-    ];
+    ].filter((entry) => {
+      const verdict = entry && entry.verdict && entry.verdict.level;
+      return verdict === 'confirmed' || verdict === 'probable' ||
+        entry.riskLevel === 'critical' || entry.riskLevel === 'high';
+    });
     if (entries.length === 0) return;
 
     const now = Date.now();
@@ -1853,15 +2012,17 @@ function createStore(options = {}) {
           ips: new Set(),
           userAgents: new Set(),
           records: [],
+          requestCount: 0,
         };
       }
       const u = byUser[row.user_key];
+      u.requestCount += 1;
       if (row.platform) u.platforms.add(row.platform);
       if (row.app_version) u.appVersions.add(row.app_version);
       if (row.build_id) u.buildIds.add(row.build_id);
       if (row.request_ip) u.ips.add(row.request_ip);
       if (row.user_agent) u.userAgents.add(row.user_agent);
-      if (u.records.length < 24) {
+      if (u.records.length < 100) {
         u.records.push({
           ts: row.request_at,
           ip: row.request_ip,
@@ -1886,8 +2047,8 @@ function createStore(options = {}) {
         ips: Array.from(data.ips).slice(0, 10),
         userAgentCount: data.userAgents.size,
         userAgents: Array.from(data.userAgents).slice(0, 10),
-        requestCount: data.records.length,
-        records: data.records.slice(0, 12),
+        requestCount: data.requestCount,
+        records: data.records.slice(0, 100),
       };
     }
     return result;
@@ -2016,6 +2177,55 @@ function parseJson(value) {
   catch { return null; }
 }
 
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const num = Number(value);
+    if (Number.isFinite(num)) return num;
+  }
+  return null;
+}
+
+function geoFromSnapshotRow(row) {
+  if (!row || (!row.country_code && !row.asn && !row.city && row.latitude == null && row.longitude == null)) {
+    return null;
+  }
+  const lat = firstFiniteNumber(row.latitude);
+  const lon = firstFiniteNumber(row.longitude);
+  return {
+    countryCode: row.country_code || '',
+    country: row.country_code || '',
+    asn: row.asn || '',
+    city: row.city || '',
+    latitude: lat,
+    longitude: lon,
+  };
+}
+
+function getTrafficBytesFromUser(user) {
+  return Number(
+    user && (
+      user.usedTrafficBytes ??
+      user.usedTraffic ??
+      (user.userTraffic && user.userTraffic.usedTrafficBytes) ??
+      0
+    )
+  ) || 0;
+}
+
+function positiveTrafficDelta(firstValue, lastValue) {
+  const first = Number(firstValue || 0);
+  const last = Number(lastValue || 0);
+  if (!Number.isFinite(first) || !Number.isFinite(last) || last <= 0) return 0;
+  if (last >= first) return last - first;
+  return last;
+}
+
+function median(values) {
+  const nums = (values || []).map(Number).filter(v => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  if (nums.length === 0) return 0;
+  return nums[Math.floor(nums.length / 2)];
+}
+
 function incidentEventTitle(type) {
   const map = {
     incident_opened: 'Инцидент открыт',
@@ -2095,6 +2305,52 @@ function runMigrations(db) {
           );
           CREATE UNIQUE INDEX IF NOT EXISTS idx_sub_history_unique_request
           ON sub_request_history(user_key, request_at, COALESCE(request_ip, ''), COALESCE(user_agent, ''));
+        `);
+      },
+    },
+    {
+      version: 4,
+      description: 'Add detailed IP observation columns',
+      up: () => {
+        const cols = db.prepare("PRAGMA table_info(ip_snapshot_ips)").all().map(c => c.name);
+        if (!cols.includes('latitude')) {
+          db.exec(`ALTER TABLE ip_snapshot_ips ADD COLUMN latitude REAL`);
+        }
+        if (!cols.includes('longitude')) {
+          db.exec(`ALTER TABLE ip_snapshot_ips ADD COLUMN longitude REAL`);
+        }
+        if (!cols.includes('node_uuid')) {
+          db.exec(`ALTER TABLE ip_snapshot_ips ADD COLUMN node_uuid TEXT`);
+        }
+        if (!cols.includes('last_seen')) {
+          db.exec(`ALTER TABLE ip_snapshot_ips ADD COLUMN last_seen TEXT`);
+        }
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS active_ip_nodes (
+            user_key TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            node_uuid TEXT NOT NULL DEFAULT '',
+            last_seen TEXT,
+            seen_at INTEGER NOT NULL,
+            PRIMARY KEY (user_key, ip, node_uuid)
+          );
+          CREATE INDEX IF NOT EXISTS idx_active_ip_nodes_user ON active_ip_nodes(user_key);
+        `);
+      },
+    },
+    {
+      version: 5,
+      description: 'Add user traffic history',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS user_traffic_history (
+            user_key TEXT NOT NULL,
+            ts INTEGER NOT NULL,
+            used_bytes INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_key, ts)
+          );
+          CREATE INDEX IF NOT EXISTS idx_user_traffic_history_ts ON user_traffic_history(ts);
+          CREATE INDEX IF NOT EXISTS idx_user_traffic_history_user_ts ON user_traffic_history(user_key, ts);
         `);
       },
     },

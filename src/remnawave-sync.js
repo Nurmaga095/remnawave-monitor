@@ -156,7 +156,7 @@ function createRemnawaveSync(options) {
 
       // Серверная детекция подозрительных
       try {
-        const fullState = store.getState();
+        const fullState = store.getState({ includeDetectionHistory: true, includeNodeDuplicates: true });
         const detection = detector.analyze(fullState);
         store.saveDetectionResult(detection);
 
@@ -329,9 +329,10 @@ function createRemnawaveSync(options) {
 
           if (!activeIps[key]) activeIps[key] = {};
           for (const entry of ipObjs) {
-            const existing = activeIps[key][entry.ip];
+            const activeKey = `${entry.ip}\n${entry.nodeUuid || ''}`;
+            const existing = activeIps[key][activeKey];
             if (!existing || isNewer(entry.lastSeen, existing.lastSeen)) {
-              activeIps[key][entry.ip] = entry;
+              activeIps[key][activeKey] = entry;
             }
           }
         }
@@ -510,8 +511,16 @@ function createRemnawaveSync(options) {
         if (u) incidentUsers.push(u);
       }
     } catch (e) { /* ignore */ }
-    const candidates = buildHwidDeviceCandidates(hwidTop, users, activeIps, incidentUsers)
-      .slice(0, hwidDetailsLimit);
+    const allCandidates = buildHwidDeviceCandidates(hwidTop, users, activeIps, incidentUsers);
+    const mandatory = allCandidates.filter(candidate => candidate.required);
+    const optionalLimit = Math.max(0, hwidDetailsLimit - mandatory.length);
+    const candidates = [
+      ...mandatory,
+      ...allCandidates.filter(candidate => !candidate.required).slice(0, optionalLimit),
+    ];
+    if (mandatory.length > hwidDetailsLimit) {
+      warnings.push(`[hwid-devices] mandatory candidates ${mandatory.length} exceed HWID_DETAILS_LIMIT=${hwidDetailsLimit}; fetching all mandatory users`);
+    }
 
     await runLimited(candidates, hwidDetailsConcurrency, async (candidate) => {
       if (!candidate.uuid) return;
@@ -533,37 +542,72 @@ function createRemnawaveSync(options) {
     const userLookup = buildUserLookup(users);
     const byUuid = new Map();
 
-    const addCandidate = (source, extraAliases = []) => {
+    const addCandidate = (source, extraAliases = [], options = {}) => {
       const user = resolveUser(source, userLookup) || source;
       const aliases = new Set([...userAliases(source), ...userAliases(user), ...extraAliases.map(String)]);
       const uuid = firstValue(user.userUuid, user.uuid, source && source.userUuid, source && source.uuid, user.id, source && source.id, user.userId);
       if (!uuid) return;
 
       const uuidKey = String(uuid);
+      const reportedDevices = getReportedHwidCount(source, user);
+      const limit = getHwidLimitForUser(user || source);
+      const priority = Math.max(
+        Number(options.priority || 0),
+        reportedDevices >= limit && reportedDevices > 0 ? 85 : 0,
+        reportedDevices > 0 ? 40 : 0
+      );
       let candidate = byUuid.get(uuidKey);
       if (!candidate) {
-        candidate = { uuid: uuidKey, userKey: userKey(user) || uuidKey, aliases: new Set([uuidKey]) };
+        candidate = {
+          uuid: uuidKey,
+          userKey: userKey(user) || uuidKey,
+          aliases: new Set([uuidKey]),
+          priority: 0,
+          required: false,
+          reportedDevices: 0,
+          reason: '',
+        };
         byUuid.set(uuidKey, candidate);
       }
       if (!candidate.userKey) candidate.userKey = userKey(user) || uuidKey;
+      candidate.priority = Math.max(candidate.priority || 0, priority);
+      candidate.required = Boolean(candidate.required || options.required || (reportedDevices >= limit && reportedDevices > 0));
+      candidate.reportedDevices = Math.max(candidate.reportedDevices || 0, reportedDevices || 0);
+      if (options.reason && !candidate.reason) candidate.reason = options.reason;
 
       for (const alias of aliases) {
         if (alias) candidate.aliases.add(alias);
       }
     };
 
-    for (const user of hwidTop || []) {
-      addCandidate(user);
+    // Active users and open incidents are evidence-critical. They must not be
+    // pushed out by the top-users endpoint limit.
+    for (const user of incidentUsers) {
+      addCandidate(user, [], { required: true, priority: 100, reason: 'incident' });
     }
 
     for (const key of Object.keys(activeIps || {})) {
       const user = userLookup.get(String(key)) || { uuid: key, id: key };
-      addCandidate(user, [key]);
+      addCandidate(user, [key], { required: true, priority: 95, reason: 'active' });
     }
 
-    // Пользователи с открытыми инцидентами — обязательно проверяем HWID
-    for (const user of incidentUsers) {
-      addCandidate(user);
+    for (const user of users || []) {
+      const reportedDevices = getReportedHwidCount(user, user);
+      const limit = getHwidLimitForUser(user);
+      if (reportedDevices > 0 && reportedDevices >= Math.max(1, limit - 1)) {
+        addCandidate(user, [], { priority: 70, required: reportedDevices >= limit, reason: 'reported_hwid' });
+      }
+    }
+
+    for (const user of hwidTop || []) {
+      const resolved = resolveUser(user, userLookup) || user;
+      const reportedDevices = getReportedHwidCount(user, resolved);
+      const limit = getHwidLimitForUser(resolved);
+      addCandidate(user, [], {
+        priority: reportedDevices >= limit && reportedDevices > 0 ? 90 : 50,
+        required: reportedDevices >= limit && reportedDevices > 0,
+        reason: 'hwid_top',
+      });
     }
 
     return Array.from(byUuid.values())
@@ -571,8 +615,13 @@ function createRemnawaveSync(options) {
         uuid: candidate.uuid,
         userKey: candidate.userKey || candidate.uuid,
         aliases: Array.from(candidate.aliases).filter(Boolean),
+        priority: candidate.priority || 0,
+        required: Boolean(candidate.required),
+        reportedDevices: candidate.reportedDevices || 0,
+        reason: candidate.reason || '',
       }))
-      .filter((candidate) => candidate.uuid && candidate.aliases.length > 0);
+      .filter((candidate) => candidate.uuid && candidate.aliases.length > 0)
+      .sort((a, b) => b.priority - a.priority || b.reportedDevices - a.reportedDevices || a.userKey.localeCompare(b.userKey));
   }
 
   async function pollJob(path) {
@@ -851,6 +900,32 @@ function resolveUser(source, lookup) {
 
 function firstValue(...values) {
   return values.find((value) => value !== null && value !== undefined && value !== '');
+}
+
+function getReportedHwidCount(...sources) {
+  for (const source of sources) {
+    if (!source) continue;
+    const value = firstValue(
+      source.devicesCount,
+      source.count,
+      source.activeUserDevices,
+      source.hwidDevicesCount,
+      source.hwid_count,
+      source.devices_count
+    );
+    if (value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return 0;
+}
+
+function getHwidLimitForUser(user) {
+  const value = user && firstValue(user.hwidDeviceLimit, user.hwidDevicesLimit);
+  if (value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  return 2;
 }
 
 module.exports = { createRemnawaveSync };

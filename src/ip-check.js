@@ -41,7 +41,7 @@ function createIpChecker(db) {
     const now = Date.now();
 
     for (const ip of ips) {
-      if (!ip || ip === '127.0.0.1' || ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.')) continue;
+      if (!isPublicIp(ip)) continue;
 
       const cached = getCache.get(ip);
       if (cached && (now - cached.checked_at) < CACHE_TTL) {
@@ -171,5 +171,29 @@ function checkBatchProxycheck(ips, apiKey) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function isPublicIp(ip) {
+  const value = String(ip || '').trim();
+  if (!value) return false;
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) {
+    const parts = value.split('.').map(Number);
+    if (parts.some((part) => part < 0 || part > 255)) return false;
+    if (parts[0] === 10) return false;
+    if (parts[0] === 127) return false;
+    if (parts[0] === 0) return false;
+    if (parts[0] === 169 && parts[1] === 254) return false;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false;
+    if (parts[0] === 192 && parts[1] === 168) return false;
+    if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return false;
+    return true;
+  }
+
+  if (value === '::1' || value.toLowerCase().startsWith('fc') || value.toLowerCase().startsWith('fd') || value.toLowerCase().startsWith('fe80:')) {
+    return false;
+  }
+
+  return value.includes(':');
+}
 
 module.exports = { createIpChecker };
