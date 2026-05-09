@@ -1262,8 +1262,7 @@ function createStore(options = {}) {
       ...(Array.isArray(detection.observed) ? detection.observed : []),
     ].filter((entry) => {
       const verdict = entry && entry.verdict && entry.verdict.level;
-      return verdict === 'confirmed' || verdict === 'probable' ||
-        entry.riskLevel === 'critical' || entry.riskLevel === 'high';
+      return verdict === 'confirmed' || verdict === 'probable';
     });
     if (entries.length === 0) return;
 

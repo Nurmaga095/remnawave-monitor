@@ -1720,14 +1720,16 @@ function renderDashboard() {
 
   renderOpsPreviews();
 
-  // Anomalies preview — только подозрительные (high/critical), без observed
+  // Anomalies preview — только подтвержденные/вероятные нарушения, без watch.
   const anomSection = document.getElementById('anomalies-section');
   const anomEl = document.getElementById('anomalies-list');
-  // Фильтруем: только suspects (high/critical с сервера или HWID-превышение)
   const realSuspects = suspects.filter(s => {
     // HWID превышение — всегда suspect
     if (s._reason === 'hwid_over_limit') return true;
-    // Серверная детекция high/critical
+    const verdict = s._verdict && s._verdict.level;
+    if (verdict === 'confirmed' || verdict === 'probable') return true;
+    if (verdict === 'watch') return false;
+    // Legacy fallback для старых записей без verdict.
     const level = s._serverLevel || '';
     if (level === 'high' || level === 'critical') return true;
     return false;
@@ -3981,12 +3983,14 @@ function getSuspects() {
     for (const serverSuspect of state.detection.suspects) {
       const sKey = serverSuspect.key;
       if (!sKey) continue;
+      const verdict = serverSuspect.verdict && serverSuspect.verdict.level;
+      if (verdict === 'watch') continue;
 
       // Пытаемся найти полные данные пользователя
       const u = state.users.find(usr => getUserAliases(usr).includes(sKey));
       if (alreadySeen(u || serverSuspect, sKey)) continue;
 
-      // Серверный suspect ВСЕГДА попадает в список — даже если фронтенд
+      // Серверный confirmed/probable suspect попадает в список — даже если фронтенд
       // считает его неактивным или не может найти в state.users.
       // Сервер уже проверил активность при детекции.
       markSeen(u || serverSuspect, sKey);
@@ -4017,9 +4021,12 @@ function isSuspicious(u) {
   const hwidLimit    = getUserHwidLimit(u);
   // Единственный критерий: HWID over limit (deterministic)
   if (devicesCount > hwidLimit) return true;
-  // Серверная детекция: critical или high
+  // Серверная детекция: только confirmed/probable считаются подозрительными.
   const serverResult = getServerDetectionForUser(u);
-  if (serverResult && (serverResult.riskLevel === 'critical' || serverResult.riskLevel === 'high')) return true;
+  if (serverResult && (serverResult.riskLevel === 'critical' || serverResult.riskLevel === 'high')) {
+    const verdict = serverResult.verdict && serverResult.verdict.level;
+    return verdict !== 'watch';
+  }
   return false;
 }
 
@@ -4027,8 +4034,9 @@ function isUnderObservation(u) {
   const devicesCount = u._hwidCount || hwidCountForUser(u);
   const hwidLimit = getUserHwidLimit(u);
   if (devicesCount > hwidLimit) return false;
-  // Серверная детекция: warning (churn, 24/7)
+  // Серверная детекция: watch/warning показываем как наблюдение.
   const serverResult = getServerDetectionForUser(u);
+  if (serverResult && serverResult.verdict && serverResult.verdict.level === 'watch') return true;
   if (serverResult && serverResult.riskLevel === 'warning') return true;
   // Фронтенд fallback: HWID churn
   const leakRisk = getKeyLeakRisk(u);

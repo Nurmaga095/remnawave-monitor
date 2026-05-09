@@ -66,7 +66,7 @@ function createDetector(options = {}) {
         context,
       };
 
-      if (level === 'critical' || level === 'high') {
+      if (verdict.level === 'confirmed' || verdict.level === 'probable') {
         suspects.push(entry);
       } else {
         observed.push(entry);
@@ -340,14 +340,15 @@ function createDetector(options = {}) {
       }
     }
 
-    // HWID sharing is very strong signal
+    // HWID sharing is useful evidence, but by itself it is not a paid-plan
+    // violation: a customer can legitimately switch accounts on one device.
     if (hwidLinked >= 2) {
-      return { id: 'fingerprint_cluster', category: 'strong', active: true, points: 25,
+      return { id: 'fingerprint_cluster', category: 'strong', active: true, points: 18,
         reason: `HWID совпадает с ${hwidLinked} аккаунтами: ${hwidLinkedAccounts.join(', ')}`,
         linkedAccounts: hwidLinkedAccounts };
     }
     if (hwidLinked === 1) {
-      return { id: 'fingerprint_match', category: 'strong', active: true, points: 15,
+      return { id: 'fingerprint_match', category: 'weak', active: true, points: 8,
         reason: `общий HWID с аккаунтом: ${hwidLinkedAccounts[0]}`,
         linkedAccounts: hwidLinkedAccounts };
     }
@@ -874,11 +875,11 @@ function createDetector(options = {}) {
     const ids = new Set(active.map(s => s.id));
     const confidenceScore = Number(confidence && confidence.score || 0);
 
-    if (ids.has('hwid_over_limit') || ids.has('fingerprint_cluster') || ids.has('fingerprint_match')) {
+    if (ids.has('hwid_over_limit')) {
       return {
         level: 'confirmed',
         label: 'confirmed_violation',
-        reason: 'Есть прямое устройство-доказательство: превышение лимита HWID или один HWID на разных аккаунтах.',
+        reason: 'Есть прямое устройство-доказательство: превышение оплаченного лимита HWID.',
       };
     }
 
@@ -889,14 +890,6 @@ function createDetector(options = {}) {
         level: 'probable',
         label: 'probable_abuse',
         reason: 'Есть устойчивые сетевые признаки сверх лимита, но без прямого HWID-превышения.',
-      };
-    }
-
-    if (riskLevel === 'high') {
-      return {
-        level: 'probable',
-        label: 'probable_abuse',
-        reason: 'Несколько независимых сигналов риска требуют ручной проверки.',
       };
     }
 
