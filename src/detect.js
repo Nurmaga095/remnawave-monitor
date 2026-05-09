@@ -97,6 +97,7 @@ function createDetector(options = {}) {
     const churn30d = getHwidChurnForUser(u, state);
     const userKey = getUserKey(u);
     const keys = getUserAliases(u);
+    const entitlement = buildEntitlementContext(state, keys, hwidLimit, hwid);
 
     // ═══ DETERMINISTIC: HWID превышает лимит ═══
     if (hwid > hwidLimit) {
@@ -123,19 +124,19 @@ function createDetector(options = {}) {
 
     // ═══ STRONG: Паттерн 24/7 ═══
     const activity = activityMap[userKey];
-    if (activity && activity.activeHours >= 22 && hwid >= hwidLimit) {
+    if (activity && activity.activeHours >= 22 && !isCoveredByPaidDeviceLimit(entitlement)) {
       signals.push({
         id: 'temporal_247', category: 'strong', active: true, points: 20,
-        reason: `активность ${activity.activeHours}/24 часов, все слоты заняты`,
+        reason: `активность ${activity.activeHours}/24 часов вне оплаченного профиля устройств`,
       });
     }
 
     // ═══ STRONG: Concurrent Multi-City Sessions (#4) ═══
-    const citySignal = detectMultiCity(u, state, keys);
+    const citySignal = detectMultiCity(u, state, keys, entitlement);
     if (citySignal) signals.push(citySignal);
 
     // ═══ STRONG: Impossible Travel (#1) ═══
-    const travelSignal = detectImpossibleTravel(u, state, keys);
+    const travelSignal = detectImpossibleTravel(u, state, keys, entitlement);
     if (travelSignal) signals.push(travelSignal);
 
     // ═══ STRONG: Velocity Abuse (#2) ═══
@@ -183,7 +184,7 @@ function createDetector(options = {}) {
   }
 
   // ─── #4 Multi-City Detection ────────────────────────────────
-  function detectMultiCity(u, state, keys) {
+  function detectMultiCity(u, state, keys, entitlement) {
     const cities = new Map(); // city -> {lat,lon}
     for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
       const geo = getGeoForEntry(entry, state);
@@ -193,23 +194,24 @@ function createDetector(options = {}) {
       if (geo.connectionType && geo.connectionType.toLowerCase().includes('cellular')) continue;
       cities.set(geo.city, point);
     }
+    if (isCoveredByPaidDeviceLimit(entitlement, cities.size)) return null;
     if (cities.size >= 3) {
       return { id: 'multi_city_extreme', category: 'strong', active: true, points: 25,
-        reason: `одновременно из ${cities.size} городов: ${[...cities.keys()].join(', ')}` };
+        reason: `одновременно из ${cities.size} городов при лимите ${entitlement.hwidLimit}: ${[...cities.keys()].join(', ')}` };
     }
     if (cities.size === 2) {
       const [c1, c2] = [...cities.values()];
       const dist = haversine(c1.lat, c1.lon, c2.lat, c2.lon);
       if (dist > 100) {
         return { id: 'multi_city_suspect', category: 'strong', active: true, points: 15,
-          reason: `2 города одновременно (${Math.round(dist)} км): ${[...cities.keys()].join(', ')}` };
+          reason: `2 города одновременно (${Math.round(dist)} км) при лимите ${entitlement.hwidLimit}: ${[...cities.keys()].join(', ')}` };
       }
     }
     return null;
   }
 
   // ─── #1 Impossible Travel Detection ─────────────────────────
-  function detectImpossibleTravel(u, state, keys) {
+  function detectImpossibleTravel(u, state, keys, entitlement) {
     const history = getDetectionHistory(state);
     if (history.length < 2) return null;
     // Check sequential snapshots for this user
@@ -243,6 +245,8 @@ function createDetector(options = {}) {
         break;
       }
     }
+    const historyDiversity = getHistoryGeoDiversity(state, keys);
+    if (isCoveredByPaidDeviceLimit(entitlement, historyDiversity.locationCount)) return null;
     if (maxSpeed > 900) {
       const crossCountry = maxDetail.length > 0;
       return { id: 'impossible_travel', category: 'strong', active: true,
@@ -662,6 +666,74 @@ function createDetector(options = {}) {
       }
     }
     return entries;
+  }
+
+  function buildEntitlementContext(state, keys, hwidLimit, hwidCount) {
+    const activeEntries = getActiveEntriesForKeys(state, keys, { freshOnly: true });
+    const ips = new Set();
+    const cities = new Set();
+    const countries = new Set();
+    const asns = new Set();
+    for (const entry of activeEntries) {
+      const ip = getEntryIp(entry);
+      if (ip) ips.add(ip);
+      const geo = getGeoForEntry(entry, state);
+      if (!geo) continue;
+      const cityKey = [geo.countryCode || geo.country || '', geo.city || ''].filter(Boolean).join(':');
+      if (cityKey) cities.add(cityKey);
+      if (geo.countryCode || geo.country) countries.add(geo.countryCode || geo.country);
+      if (geo.asn) asns.add(String(geo.asn));
+    }
+
+    return {
+      hwidLimit: Math.max(1, Number(hwidLimit || 1)),
+      hwidCount: Math.max(0, Number(hwidCount || 0)),
+      activeIpCount: ips.size,
+      cityCount: cities.size,
+      countryCount: countries.size,
+      asnCount: asns.size,
+    };
+  }
+
+  function isCoveredByPaidDeviceLimit(entitlement, observedSpread = null) {
+    if (!entitlement) return false;
+    const hwidLimit = Math.max(1, Number(entitlement.hwidLimit || 1));
+    const hwidCount = Math.max(0, Number(entitlement.hwidCount || 0));
+    if (hwidLimit <= 1 || hwidCount <= 1 || hwidCount > hwidLimit) return false;
+
+    const spread = Number(observedSpread != null
+      ? observedSpread
+      : Math.max(entitlement.activeIpCount || 0, entitlement.cityCount || 0, entitlement.countryCount || 0, entitlement.asnCount || 0));
+    return spread > 0 && spread <= hwidLimit;
+  }
+
+  function getHistoryGeoDiversity(state, keys) {
+    const locations = new Set();
+    const countries = new Set();
+    const asns = new Set();
+    for (const snap of getDetectionHistory(state)) {
+      for (const key of keys || []) {
+        const ips = snap.ips && snap.ips[key];
+        if (!ips) continue;
+        for (const entry of normalizeIpEntries(ips)) {
+          const geo = getGeoForEntry(entry, state);
+          if (!geo) continue;
+          const locationKey = [
+            geo.countryCode || geo.country || '',
+            geo.city || '',
+            geo.asn ? `AS${geo.asn}` : '',
+          ].filter(Boolean).join(':');
+          if (locationKey) locations.add(locationKey);
+          if (geo.countryCode || geo.country) countries.add(geo.countryCode || geo.country);
+          if (geo.asn) asns.add(String(geo.asn));
+        }
+      }
+    }
+    return {
+      locationCount: locations.size,
+      countryCount: countries.size,
+      asnCount: asns.size,
+    };
   }
 
   function haversine(lat1, lon1, lat2, lon2) {
