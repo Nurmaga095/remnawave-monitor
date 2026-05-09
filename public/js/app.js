@@ -128,6 +128,7 @@ let state = {
   sync: null,
   aiSettings: null,
   aiProviders: [],
+  telegramSettings: null,
   stateVersion: 0,
   lastStateETag: null,
   bulkSelected: new Set(),
@@ -4566,7 +4567,10 @@ function showTab(name) {
   document.getElementById('page-title').textContent = titles[name] || name;
   closeSidebarIfMobile();
   if (name === 'rules') loadRulesTab();
-  if (name === 'settings') loadAiSettingsTab();
+  if (name === 'settings') {
+    loadAiSettingsTab();
+    loadTelegramSettingsTab();
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -5070,6 +5074,7 @@ function showSettingsSection(section) {
   document.getElementById('settings-section-' + section)?.classList.add('active');
   document.querySelector(`[data-settings-section="${section}"]`)?.classList.add('active');
   if (section === 'ai') loadAiSettingsTab();
+  if (section === 'telegram') loadTelegramSettingsTab();
 }
 
 async function loadAiSettingsTab(force = false) {
@@ -5320,6 +5325,99 @@ async function runAiSuspectsAnalysis() {
     setAiResult(result, `<div class="ai-error-title">Анализ не выполнен</div><p>${esc(e.message)}</p>`);
   } finally {
     setBtnBusy('ai-suspects-btn', false);
+  }
+}
+
+async function loadTelegramSettingsTab(force = false) {
+  const root = document.getElementById('telegram-settings-root');
+  if (!root) return;
+  if (state.telegramSettings && !force) {
+    renderTelegramSettings();
+    return;
+  }
+  root.innerHTML = '<div class="loading-state" style="padding:32px"><div class="spinner-large"></div><p>Загрузка Telegram-настроек...</p></div>';
+  try {
+    const res = await fetch('/api/telegram/settings', { credentials: 'same-origin' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    state.telegramSettings = data || {};
+    renderTelegramSettings();
+  } catch (e) {
+    root.innerHTML = `<div class="empty-state"><p>Не удалось загрузить Telegram-настройки: ${esc(e.message)}</p></div>`;
+  }
+}
+
+function renderTelegramSettings() {
+  const root = document.getElementById('telegram-settings-root');
+  if (!root) return;
+  const tg = state.telegramSettings || {};
+  const statusBadge = tg.ready
+    ? '<span class="pill ok">Готово к отправке</span>'
+    : '<span class="pill warn">Нужно заполнить .env</span>';
+  const topicLabel = tg.topicId ? esc(tg.topicId) : 'не указан (пойдет в общий чат)';
+
+  root.innerHTML = `
+    <div class="ai-settings-grid">
+      <div class="ai-settings-main">
+        <div class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <h4>Telegram-уведомления</h4>
+              <p>Уведомления отправляются в чат/топик при новых или изменившихся нарушениях лимита устройств.</p>
+            </div>
+            ${statusBadge}
+          </div>
+
+          <div class="provider-kv"><span>Bot token</span><b>${tg.hasBotToken ? 'задан' : 'не задан'}</b></div>
+          <div class="provider-kv"><span>Chat ID</span><code>${esc(tg.chatId || 'не задан')}</code></div>
+          <div class="provider-kv"><span>Topic ID</span><code>${topicLabel}</code></div>
+
+          <div class="ai-actions" style="margin-top:14px">
+            <button class="btn-primary" id="tg-test-btn" onclick="sendTelegramTestNotification()">Отправить тест нарушения</button>
+            <button class="btn-secondary" onclick="loadTelegramSettingsTab(true)">Обновить статус</button>
+          </div>
+
+          <div id="tg-settings-result" class="ai-result">
+            <div class="ai-list-block ai-list-muted">
+              <b>Прикольные пункты</b>
+              <span>Отправка в топик форума Telegram (если задан <code>TELEGRAM_TOPIC_ID</code>).</span>
+              <span>Тест — выглядит как настоящее нарушение, но с мок-данными.</span>
+              <span>Можно проверить токен/чат/топик без ожидания реального инцидента.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ai-settings-side">
+        <div class="settings-card">
+          <h4>Как настроить</h4>
+          <ul>
+            <li>В <code>.env</code>: <code>TELEGRAM_BOT_TOKEN</code></li>
+            <li>В <code>.env</code>: <code>TELEGRAM_CHAT_ID</code></li>
+            <li>Опционально: <code>TELEGRAM_TOPIC_ID</code></li>
+            <li>После изменений перезапусти сервер</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function sendTelegramTestNotification() {
+  setBtnBusy('tg-test-btn', true, 'Отправка...');
+  try {
+    const res = await fetch('/api/telegram/test', { method: 'POST', credentials: 'same-origin' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    toast('Тестовое уведомление отправлено', 'success');
+    const result = document.getElementById('tg-settings-result');
+    setAiResult(result, `<div class="ai-ok-title">Тест отправлен</div><p>Проверь чат/топик — сообщение выглядит как нарушение (мок-данные).</p>`);
+  } catch (e) {
+    toast('Ошибка отправки теста: ' + e.message, 'error');
+    const result = document.getElementById('tg-settings-result');
+    setAiResult(result, `<div class="ai-error-title">Тест не отправлен</div><p>${esc(e.message)}</p>`);
+  } finally {
+    setBtnBusy('tg-test-btn', false);
   }
 }
 

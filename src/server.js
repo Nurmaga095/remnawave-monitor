@@ -33,6 +33,8 @@ const IP_GEO_CACHE_TTL_DAYS = Number(process.env.IP_GEO_CACHE_TTL_DAYS || 7);
 const IP_GEO_SYNC_LIMIT = Number(process.env.IP_GEO_SYNC_LIMIT || 200);
 const IP_GEO_CONCURRENCY = Number(process.env.IP_GEO_CONCURRENCY || 4);
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
+const TELEGRAM_TOPIC_ID = process.env.TELEGRAM_TOPIC_ID || '';
 const HWID_HISTORY_RETENTION_DAYS = Number(process.env.HWID_HISTORY_RETENTION_DAYS || 30);
 const AUDIT_LOG_RETENTION_DAYS = Number(process.env.AUDIT_LOG_RETENTION_DAYS || 14);
 const ACTIVITY_HISTORY_RETENTION_DAYS = Number(process.env.ACTIVITY_HISTORY_RETENTION_DAYS || 7);
@@ -146,6 +148,9 @@ const dataSync = createRemnawaveSync({
     ipGeoCacheTtlDays: IP_GEO_CACHE_TTL_DAYS,
     ipGeoSyncLimit: IP_GEO_SYNC_LIMIT,
     ipGeoConcurrency: IP_GEO_CONCURRENCY,
+    telegramBotToken: TELEGRAM_BOT_TOKEN,
+    telegramChatId: TELEGRAM_CHAT_ID,
+    telegramTopicId: TELEGRAM_TOPIC_ID,
   },
 });
 
@@ -235,6 +240,16 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/notify-user') {
       await handleNotifyUser(req, res);
+      return;
+    }
+
+    if (pathname === '/api/telegram/settings') {
+      await handleTelegramSettings(req, res);
+      return;
+    }
+
+    if (pathname === '/api/telegram/test') {
+      await handleTelegramTest(req, res);
       return;
     }
 
@@ -1012,6 +1027,132 @@ async function handleNotifyUser(req, res) {
     console.error(`[notify] Ошибка сети: ${userKey}`, e.message);
     sendJson(res, 500, { error: `Ошибка отправки: ${e.message}` });
   }
+}
+
+async function handleTelegramSettings(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'GET' });
+    return;
+  }
+
+  const chatId = String(process.env.TELEGRAM_CHAT_ID || '').trim();
+  const topicId = String(process.env.TELEGRAM_TOPIC_ID || '').trim();
+  const token = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+
+  sendJson(res, 200, {
+    hasBotToken: Boolean(token),
+    chatId: chatId || '',
+    topicId: topicId || '',
+    ready: Boolean(token && chatId),
+  });
+}
+
+async function handleTelegramTest(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' });
+    return;
+  }
+
+  const botToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const chatId = String(process.env.TELEGRAM_CHAT_ID || '').trim();
+  const topicId = String(process.env.TELEGRAM_TOPIC_ID || '').trim();
+
+  if (!botToken) {
+    sendJson(res, 500, { error: 'Не настроен TELEGRAM_BOT_TOKEN в .env' });
+    return;
+  }
+  if (!chatId) {
+    sendJson(res, 500, { error: 'Не настроен TELEGRAM_CHAT_ID в .env' });
+    return;
+  }
+
+  const nowMsk = formatMskDate(Date.now());
+  const message = [
+    '⚠️ Нарушение лимита устройств',
+    '',
+    '🚨 НАРУШИТЕЛЬ ЛИМИТА',
+    '',
+    '📧 Username: user_999999999',
+    '📱 TG ID: 999999999',
+    '📝 Описание: Bot user: Test User @test_monitor_user',
+    '',
+    '🌐 IP адресов: 1/1',
+    '📍 IP (провайдеры):',
+    '   31.173.82.52 - PJSC MegaFon (RU)',
+    '🖥 Ноды: test-node-ru-4',
+    '',
+    '📲 Устройства (1/1):',
+    '   iOS 26.1',
+    '',
+    '❗ Причины:',
+    '   • HWID совпадает с 1 другими аккаунтами: user_email_test_001',
+    '🎯 Действие: ViolationAction.WARN',
+    '📊 Скор: 50.0/100',
+    `🕐 Время (МСК): ${nowMsk}`,
+    '',
+    '🧪 Это тестовое уведомление с мок-данными',
+  ].join('\n');
+
+  try {
+    const apiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+    const payload = {
+      chat_id: chatId,
+      text: message,
+      disable_web_page_preview: true,
+    };
+    const threadId = Number(topicId);
+    if (Number.isFinite(threadId) && threadId > 0) payload.message_thread_id = threadId;
+    const payloadJson = JSON.stringify(payload);
+
+    const result = await new Promise((resolve, reject) => {
+      const tgReq = https.request(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payloadJson),
+        },
+      }, (tgRes) => {
+        let data = '';
+        tgRes.on('data', chunk => data += chunk);
+        tgRes.on('end', () => {
+          try { resolve({ status: tgRes.statusCode, body: JSON.parse(data) }); }
+          catch { resolve({ status: tgRes.statusCode, body: { raw: data } }); }
+        });
+      });
+      tgReq.on('error', reject);
+      tgReq.write(payloadJson);
+      tgReq.end();
+    });
+
+    if (result.status >= 200 && result.status < 300 && result.body.ok) {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    const errMsg = result.body.description || `Telegram API error: ${result.status}`;
+    sendJson(res, result.status || 500, { error: errMsg });
+  } catch (e) {
+    sendJson(res, 500, { error: `Ошибка отправки: ${e.message}` });
+  }
+}
+
+function formatMskDate(ts) {
+  const d = new Date(Number(ts || Date.now()));
+  const parts = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${map.day}.${map.month}.${map.year} ${map.hour}:${map.minute}:${map.second}`;
 }
 
 async function handleUserNotifications(req, res) {
