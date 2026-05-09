@@ -1828,20 +1828,20 @@ function renderRemnawaveInventory() {
   const extra = state.remnawaveExtra || (state.data && state.data.remnawaveExtra) || null;
   const endpoints = extra && extra.endpoints || {};
   const items = [
-    inventoryItem('Hosts', 'hosts', endpoints.hosts, ['hosts']),
-    inventoryItem('Squads', 'internalSquads', endpoints.internalSquads, ['internalSquads', 'squads']),
-    inventoryItem('External', 'externalSquads', endpoints.externalSquads, ['externalSquads']),
-    inventoryItem('Profiles', 'configProfiles', endpoints.configProfiles, ['configProfiles', 'profiles']),
-    inventoryItem('Inbounds', 'inbounds', endpoints.inbounds, ['inbounds']),
-    inventoryItem('Subscriptions', 'subscriptions', endpoints.subscriptions, ['subscriptions']),
-    inventoryItem('Billing', 'infraNodes', endpoints.infraNodes, ['nodes', 'infraBillingNodes']),
-    inventoryItem('Plugins', 'nodePlugins', endpoints.nodePlugins, ['plugins', 'nodePlugins']),
+    inventoryItem('Хосты', 'hosts', endpoints.hosts, ['hosts']),
+    inventoryItem('Группы', 'internalSquads', endpoints.internalSquads, ['internalSquads', 'squads']),
+    inventoryItem('Внешние группы', 'externalSquads', endpoints.externalSquads, ['externalSquads']),
+    inventoryItem('Профили', 'configProfiles', endpoints.configProfiles, ['configProfiles', 'profiles']),
+    inventoryItem('Инбаунды', 'inbounds', endpoints.inbounds, ['inbounds']),
+    inventoryItem('Подписки', 'subscriptions', endpoints.subscriptions, ['subscriptions']),
+    inventoryItem('Биллинг', 'infraNodes', endpoints.infraNodes, ['nodes', 'infraBillingNodes']),
+    inventoryItem('Плагины', 'nodePlugins', endpoints.nodePlugins, ['plugins', 'nodePlugins']),
   ];
   const availableCount = extra && Array.isArray(extra.available) ? extra.available.length : 0;
   setVal('remnawave-extra-count', availableCount);
 
   if (!extra || availableCount === 0) {
-    el.innerHTML = '<div class="empty-state sm"><p>Дополнительные данные появятся после следующего успешного sync</p></div>';
+    el.innerHTML = '<div class="empty-state sm"><p>Дополнительные данные появятся после следующей успешной синхронизации</p></div>';
     return;
   }
 
@@ -1857,7 +1857,7 @@ function renderRemnawaveInventory() {
       <b>${item.count}</b>
       <code>${esc(item.path || 'нет данных')}</code>
     </div>`).join('')}
-    <div class="inventory-wide inventory-muted"><span>Endpoint'ы</span><b>${availableCount} ok / ${unavailable} skip</b></div>
+    <div class="inventory-wide inventory-muted"><span>Эндпоинты</span><b>${availableCount} успешно / ${unavailable} пропущено</b></div>
   `;
 }
 
