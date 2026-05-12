@@ -353,6 +353,16 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === '/api/user-srh-live') {
+      await handleUserSrhLive(req, res, parsedUrl);
+      return;
+    }
+
+    if (pathname === '/api/user-hwid-devices') {
+      await handleUserHwidDevices(req, res, parsedUrl);
+      return;
+    }
+
     await serveStatic(req, res, pathname);
   } catch (e) {
     console.error('[server] unexpected error:', e);
@@ -893,6 +903,38 @@ async function handleUserBandwidth(req, res, parsedUrl) {
     sendJson(res, 200, resp.json?.response || {});
   } catch (e) {
     console.error('[user-bandwidth] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── Per-User SRH (Live from Remnawave Panel) ──────────────────
+async function handleUserSrhLive(req, res, parsedUrl) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  const uuid = parsedUrl.searchParams.get('uuid') || '';
+  if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
+  try {
+    const resp = await remnawaveApi('GET', `/api/users/${uuid}/subscription-request-history`);
+    const records = resp.json?.response || [];
+    sendJson(res, 200, { records: Array.isArray(records) ? records : [] });
+  } catch (e) {
+    console.error('[user-srh-live] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── Per-User HWID Devices (Live from Remnawave Panel) ───────────
+async function handleUserHwidDevices(req, res, parsedUrl) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  const uuid = parsedUrl.searchParams.get('uuid') || '';
+  if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
+  try {
+    const resp = await remnawaveApi('GET', `/api/hwid/devices/${uuid}`);
+    const devices = resp.json?.response || [];
+    sendJson(res, 200, { devices: Array.isArray(devices) ? devices : [] });
+  } catch (e) {
+    console.error('[user-hwid-devices] error:', e.message);
     sendJson(res, 500, { error: e.message });
   }
 }
