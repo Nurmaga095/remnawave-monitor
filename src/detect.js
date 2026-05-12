@@ -122,11 +122,12 @@ function createDetector(options = {}) {
       });
     }
 
-    // ═══ STRONG: Паттерн 24/7 ═══
+    // ═══ WEAK: Паттерн 24/7 ═══
+    // Demoted: 24/7 activity alone doesn't prove sharing (always-on devices, servers)
     const activity = activityMap[userKey];
     if (activity && activity.activeHours >= 22 && !isCoveredByPaidDeviceLimit(entitlement)) {
       signals.push({
-        id: 'temporal_247', category: 'strong', active: true, points: 20,
+        id: 'temporal_247', category: 'weak', active: true, points: 15,
         reason: `активность ${activity.activeHours}/24 часов вне оплаченного профиля устройств`,
       });
     }
@@ -782,7 +783,7 @@ function createDetector(options = {}) {
     const strong = active.filter(s => s.category === 'strong');
     const weak = active.filter(s => s.category === 'weak');
 
-    // HWID over limit → critical (60-100)
+    // HWID/IP over limit → critical (60-100)
     if (deterministic.length > 0) {
       const detPoints = deterministic.reduce((sum, s) => sum + s.points, 0);
       const strongExtra = strong.reduce((sum, s) => sum + s.points, 0);
@@ -803,16 +804,19 @@ function createDetector(options = {}) {
     }
 
     // Single strong or multiple weak → warning (20-39)
-    if (strong.length > 0 || weak.length >= 3) {
+    // Raised threshold: needs >= 25 pts total to trigger warning
+    if (strong.length > 0) {
       const pts = sumMaxPointsByEvidenceType(strong) + weak.reduce((sum, s) => sum + s.points, 0);
-      const score = Math.min(39, Math.max(20, pts));
-      return { score, level: score >= 20 ? 'warning' : 'clean' };
+      if (pts >= 25) {
+        const score = Math.min(39, Math.max(25, pts));
+        return { score, level: 'warning' };
+      }
     }
 
-    // Only weak signals
+    // Only weak signals → warning requires >= 30 pts (3+ independent weak signals)
     if (weak.length > 0) {
       const pts = weak.reduce((sum, s) => sum + s.points, 0);
-      if (pts >= 20) return { score: Math.min(39, pts), level: 'warning' };
+      if (pts >= 30) return { score: Math.min(39, pts), level: 'warning' };
     }
 
     return { score: 0, level: 'clean' };
@@ -915,11 +919,22 @@ function createDetector(options = {}) {
     }
 
     if (ids.has('app_stability_breakdown')) {
-      return {
-        level: 'confirmed',
-        label: 'confirmed_collective_account',
-        reason: 'Клиентский build_id меняется быстрее недельного цикла и одновременно прыгает между платформами.',
-      };
+      // Only confirm for deterministic category (confidence 100%), not weak/watch
+      const appSignal = active.find(s => s.id === 'app_stability_breakdown');
+      if (appSignal && appSignal.category === 'deterministic') {
+        return {
+          level: 'confirmed',
+          label: 'confirmed_collective_account',
+          reason: 'Клиентский build_id меняется быстрее недельного цикла и одновременно прыгает между платформами.',
+        };
+      }
+      if (appSignal && appSignal.category === 'strong') {
+        return {
+          level: 'probable',
+          label: 'probable_collective_account',
+          reason: 'Нестабильный клиент: частая смена build_id и платформ.',
+        };
+      }
     }
 
     if (ids.has('confirmed_simultaneous_ips')) {
@@ -933,9 +948,11 @@ function createDetector(options = {}) {
       }
     }
 
-    const networkProof = ['extracted_key_suspected', 'simultaneous_distinct_networks', 'multi_node_simultaneous']
+    const networkProof = ['multi_node_simultaneous']
       .filter(id => ids.has(id));
-    if (riskLevel === 'high' && confidenceScore >= 50 && networkProof.length > 0) {
+    // Only strong signals count as network proof (weak geo-dependent signals excluded)
+    const hasStrongNetworkProof = networkProof.length > 0;
+    if (riskLevel === 'high' && confidenceScore >= 50 && hasStrongNetworkProof) {
       return {
         level: 'probable',
         label: 'probable_abuse',
