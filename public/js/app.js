@@ -1,137 +1,59 @@
-// ─── State ───────────────────────────────────────────────────────
+// ─── Frontend Modules ─────────────────────────────────────────────
 const DEBUG = new URLSearchParams(window.location.search).has('debug') || localStorage.getItem('rwm_debug') === '1';
 const debugLog = (...args) => { if (DEBUG) console.log(...args); };
 
-// ─── SVG Icon Library (replaces emoji) ─────────────────────────────
-const IC = {
-  // Risk level dots (colored via CSS)
-  dot: (color) => `<span class="ic-dot" style="background:${color}"></span>`,
-  // Lucide-style icons (18x18, stroke-based)
-  _s: (d, w = 18) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`,
-  // Signal icons
-  hwid: null, churn: null, clock247: null, globe: null, plane: null, zap: null,
-  link: null, server: null, building: null, chart: null, ban: null,
-  warn: null, check: null, clipboard: null, shield: null, edit: null,
-  trash: null, test: null, bolt: null, timer: null, phone: null,
-  plug: null, wifi: null, search: null, refresh: null,
-};
-// Deferred init to keep const short
-(function() {
-  const s = IC._s;
-  IC.hwid =     s('<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>');
-  IC.churn =    s('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>');
-  IC.clock247 = s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
-  IC.globe =    s('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>');
-  IC.plane =    s('<path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.4-.1.9.3 1.1L11 12l-2 3H6l-2 2 4-1 4-1 2 2v3l2-2-1-4 3-2 4.2 7.3c.2.4.7.5 1.1.3l.5-.3c.4-.2.5-.6.4-1.1z"/>');
-  IC.zap =      s('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>');
-  IC.link =     s('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>');
-  IC.server =   s('<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>');
-  IC.building = s('<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/>');
-  IC.chart =    s('<path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/>');
-  IC.ban =      s('<circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>');
-  IC.warn =     s('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');
-  IC.check =    s('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>');
-  IC.clipboard= s('<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>');
-  IC.shield =   s('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>');
-  IC.edit =     s('<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>');
-  IC.trash =    s('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>');
-  IC.test =     s('<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/>');
-  IC.bolt =     s('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>');
-  IC.timer =    s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
-  IC.phone =    s('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>');
-  IC.plug =     s('<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a6 6 0 0 1-12 0V8z"/>');
-  IC.wifi =     s('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>');
-  IC.search =   s('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
-  IC.refresh =  s('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>');
-  IC.note =     s('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>');
-  IC.traffic =  s('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
-  IC.bell =     s('<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>');
-  IC.activity = s('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>');
-  IC.map =      s('<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>');
-  IC.users =    s('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>');
-  IC.unban =    s('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>');
-  IC.send =     s('<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>');
-})();
+let cfg;
+let state;
+let IC;
+let apiClient;
+let resetSharedState;
+let uiControls;
+let chartControls;
 
-// ─── Theme ────────────────────────────────────────────────────────
-(function initTheme() {
-  const saved = localStorage.getItem('rwm_theme');
-  if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
-})();
+const frontendModulesReady = Promise.all([
+  import('./state.js'),
+  import('./api.js'),
+  import('./ui.js'),
+  import('./charts.js'),
+]).then(([stateModule, apiModule, uiModule, chartsModule]) => {
+  cfg = stateModule.cfg;
+  state = stateModule.state;
+  resetSharedState = stateModule.resetState;
+  IC = uiModule.IC;
+  uiControls = uiModule;
+  uiControls.applyInitialTheme();
+  uiControls.updateThemeButton();
+
+  apiClient = apiModule.createApiClient({ onAuthExpired: handleAuthExpired, debugLog });
+  chartControls = chartsModule.createActivityChartController({ getState: () => state });
+
+  return { apiModule, chartsModule };
+}).catch((e) => {
+  console.error('[modules] failed to load:', e);
+  throw e;
+});
+
+async function ensureFrontendModules() {
+  return frontendModulesReady;
+}
 
 function toggleTheme() {
-  const html = document.documentElement;
-  const isLight = html.getAttribute('data-theme') === 'light';
-  if (isLight) {
-    html.removeAttribute('data-theme');
-    localStorage.setItem('rwm_theme', 'dark');
-  } else {
-    html.setAttribute('data-theme', 'light');
-    localStorage.setItem('rwm_theme', 'light');
-  }
-  updateThemeButton();
+  if (!uiControls) return;
+  uiControls.toggleTheme();
+  renderActivityChart();
 }
 
 function updateThemeButton() {
-  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-  const label = document.getElementById('theme-label');
-  const icon = document.getElementById('theme-icon');
-  if (label) label.textContent = isLight ? 'Тёмная тема' : 'Светлая тема';
-  if (icon) icon.innerHTML = isLight
-    ? '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'
-    : '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
+  if (uiControls) uiControls.updateThemeButton();
 }
-document.addEventListener('DOMContentLoaded', updateThemeButton);
 
-// ─── Mobile Sidebar ──────────────────────────────────────────────
 function toggleSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  if (!sidebar) return;
-  const open = sidebar.classList.toggle('open');
-  if (overlay) overlay.classList.toggle('open', open);
-  document.body.style.overflow = open ? 'hidden' : '';
+  if (uiControls) uiControls.toggleSidebar();
 }
 
 function closeSidebarIfMobile() {
-  if (window.innerWidth <= 768) {
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('sidebar-overlay');
-    if (sidebar) sidebar.classList.remove('open');
-    if (overlay) overlay.classList.remove('open');
-    document.body.style.overflow = '';
-  }
+  if (uiControls) uiControls.closeSidebarIfMobile();
 }
-
-let cfg = { interval: 30 };
-let state = {
-  users: [],
-  hwidTop: [],
-  hwidDevices: {},
-  activeIps: {},       // userKey -> string[] (текущий снапшот)
-  activeIpWindows: {}, // live/5/15/30 -> userKey -> ip objects
-  onlineWindow: 'live',
-  ipHistory: [],       // [{ts, ips: {userKey -> Set<string>}}] — окно стабильности IP
-  ipStats: {},         // userKey -> агрегаты IP/ASN/стран за 24 часа
-  hwidChurn: {},       // userKey -> количество уникальных HWID за 30 дней
-  trafficMedian: 0,    // медианный трафик всех пользователей
-  remnawaveExtra: null,
-  suspectStreak: {},   // userKey -> {hits, total} — сколько раз замечен
-  sessionFilter: 'all',
-  sessionSort: 'ip-desc',
-  searchQuery: '',
-  incidentFilter: 'open',
-  refreshTimer: null,
-  countdown: 0,
-  countdownTimer: null,
-  loading: false,
-  sync: null,
-  aiSettings: null,
-  aiProviders: [],
-  stateVersion: 0,
-  lastStateETag: null,
-  bulkSelected: new Set(),
-};
 
 // ─── Диагностика API ──────────────────────────────────────────────
 async function runDiag() {
@@ -218,6 +140,7 @@ async function init() {
   sessionStorage.removeItem('rwm_config');
 
   try {
+    await ensureFrontendModules();
     const session = await getSession();
     if (session.authenticated) {
       applySession(session);
@@ -230,8 +153,11 @@ async function init() {
       showSetup(session);
     }
   } catch (e) {
-    console.warn('[auth] session check failed:', e.message);
+    console.warn('[init] startup failed:', e.message);
     showSetup();
+    showSetupError(!state
+      ? 'Не удалось загрузить фронтенд-модули. Проверь доступность /js/*.js.'
+      : `Не удалось проверить сессию: ${e.message}`);
   }
 }
 
@@ -329,38 +255,23 @@ function applySession(session) {
 }
 
 async function apiGet(path) {
-  const proxyUrl = `/proxy?path=${encodeURIComponent(path)}`;
-  return fetch(proxyUrl, { credentials: 'same-origin' });
+  await ensureFrontendModules();
+  return apiClient.apiGet(path);
 }
 
 async function apiPost(path, body = {}) {
-  const proxyUrl = `/proxy?path=${encodeURIComponent(path)}&method=POST`;
-  return fetch(proxyUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    body: JSON.stringify(body)
-  });
+  await ensureFrontendModules();
+  return apiClient.apiPost(path, body);
 }
 
 async function api(path) {
-  const res = await apiGet(path);
-  if (res.status === 401) {
-    await handleAuthExpired();
-    throw new Error('Сессия истекла, войди снова');
-  }
-  if (!res.ok) {
-    const data = await readJsonSafe(res);
-    throw new Error(data.error || `HTTP ${res.status}`);
-  }
-  const json = await res.json();
-  debugLog(`[API] ${path}`, json);
-  return json;
+  await ensureFrontendModules();
+  return apiClient.api(path);
 }
 
 async function readJsonSafe(res) {
-  try { return await res.json(); }
-  catch { return {}; }
+  const modules = await ensureFrontendModules();
+  return modules.apiModule.readJsonSafe(res);
 }
 
 async function handleAuthExpired() {
@@ -370,18 +281,7 @@ async function handleAuthExpired() {
 }
 
 function resetData() {
-  state.users = [];
-  state.hwidTop = [];
-  state.hwidDevices = {};
-  state.activeIps = {};
-  state.activeIpWindows = {};
-  state.ipHistory = [];
-  state.ipStats = {};
-  state.suspectStreak = {};
-  state.hwidChurn = {};
-  state.trafficMedian = 0;
-  state.sync = null;
-  state.loading = false;
+  if (typeof resetSharedState === 'function') resetSharedState();
 }
 
 // Универсальный экстрактор массива из любого формата ответа Remnawave
@@ -903,6 +803,7 @@ function scheduleRefresh() {
 }
 
 function clearTimers() {
+  if (!state) return;
   if (state.refreshTimer) { clearInterval(state.refreshTimer); state.refreshTimer = null; }
   if (state.countdownTimer) { clearInterval(state.countdownTimer); state.countdownTimer = null; }
 }
@@ -1304,71 +1205,6 @@ function countryToFlag(cc) {
     0x1F1E6 + upper.charCodeAt(0) - 65,
     0x1F1E6 + upper.charCodeAt(1) - 65
   );
-}
-
-// ─── Activity Chart (SVG) ─────────────────────────────────────────
-function renderActivityChart() {
-  const el = document.getElementById('activity-chart');
-  if (!el || !state.data || !state.data.activityHistory) return;
-  const history = state.data.activityHistory;
-  if (history.length < 2) {
-    el.innerHTML = '<div class="chart-empty">Недостаточно данных для графика</div>';
-    return;
-  }
-
-  const mode = state.chartMode || '24h';
-  const cutoff = Date.now() - (mode === '7d' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000);
-  const points = history.filter(p => p.ts >= cutoff);
-  if (points.length < 2) {
-    el.innerHTML = '<div class="chart-empty">Недостаточно данных</div>';
-    return;
-  }
-
-  const W = el.clientWidth || 600;
-  const H = 140;
-  const PAD = { t: 10, r: 10, b: 24, l: 36 };
-  const maxY = Math.max(1, ...points.map(p => p.online));
-  const minTs = points[0].ts;
-  const maxTs = points[points.length - 1].ts;
-  const rangeTs = maxTs - minTs || 1;
-
-  const x = (ts) => PAD.l + (ts - minTs) / rangeTs * (W - PAD.l - PAD.r);
-  const y = (val) => PAD.t + (1 - val / maxY) * (H - PAD.t - PAD.b);
-
-  // Path
-  const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.ts).toFixed(1)},${y(p.online).toFixed(1)}`).join(' ');
-  const areaD = pathD + ` L${x(points[points.length - 1].ts).toFixed(1)},${H - PAD.b} L${x(points[0].ts).toFixed(1)},${H - PAD.b} Z`;
-
-  // Y labels
-  const yLabels = [0, Math.round(maxY / 2), maxY].map(v =>
-    `<text x="${PAD.l - 6}" y="${y(v) + 4}" class="chart-label" text-anchor="end">${v}</text>`
-  ).join('');
-
-  // X labels (5 ticks)
-  const xLabels = Array.from({ length: 5 }, (_, i) => {
-    const t = minTs + rangeTs * i / 4;
-    const d = new Date(t);
-    const label = mode === '7d'
-      ? `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`
-      : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    return `<text x="${x(t)}" y="${H - 4}" class="chart-label" text-anchor="middle">${label}</text>`;
-  }).join('');
-
-  el.innerHTML = `
-    <div class="chart-header">
-      <span class="chart-title">Онлайн пользователей</span>
-      <div class="chart-toggle">
-        <button class="${mode === '24h' ? 'active' : ''}" onclick="state.chartMode='24h';renderActivityChart()">24ч</button>
-        <button class="${mode === '7d' ? 'active' : ''}" onclick="state.chartMode='7d';renderActivityChart()">7д</button>
-      </div>
-    </div>
-    <svg width="${W}" height="${H}" class="chart-svg">
-      <defs><linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366f1" stop-opacity="0.3"/><stop offset="100%" stop-color="#6366f1" stop-opacity="0"/></linearGradient></defs>
-      ${yLabels}${xLabels}
-      <line x1="${PAD.l}" y1="${H - PAD.b}" x2="${W - PAD.r}" y2="${H - PAD.b}" stroke="var(--border)" stroke-width="1"/>
-      <path d="${areaD}" fill="url(#chartGrad)"/>
-      <path d="${pathD}" fill="none" stroke="#818cf8" stroke-width="2" stroke-linejoin="round"/>
-    </svg>`;
 }
 
 // ─── Delta Badges ─────────────────────────────────────────────────
@@ -5483,366 +5319,15 @@ function disconnectSSE() {
   if (_sseReconnectTimer) { clearTimeout(_sseReconnectTimer); _sseReconnectTimer = null; }
 }
 
-// ─── Activity Chart (Canvas) ──────────────────────────────────────
-let _chartRange = '6h';
-let _chartHoverIdx = -1;
-
+// ─── Activity Chart ───────────────────────────────────────────────
 function setChartRange(range, btn) {
-  _chartRange = range;
-  if (btn) {
-    btn.closest('.window-switch').querySelectorAll('button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  }
-  renderActivityChart();
+  if (!chartControls) return;
+  chartControls.setChartRange(range, btn);
 }
 
 function renderActivityChart() {
-  const canvas = document.getElementById('activity-chart');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-
-  const rect = canvas.parentElement.getBoundingClientRect();
-  const w = rect.width;
-  const h = 200;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
-  ctx.scale(dpr, dpr);
-
-  const isDark = !document.documentElement.getAttribute('data-theme') || document.documentElement.getAttribute('data-theme') !== 'light';
-  const history = (state.data && state.data.activityHistory) || [];
-
-  // Empty state
-  if (history.length < 2) {
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
-    ctx.font = '500 13px Inter, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Ожидание данных активности...', w / 2, h / 2 - 10);
-    ctx.font = '400 11px Inter, sans-serif';
-    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
-    ctx.fillText('Данные появятся после нескольких циклов синхронизации', w / 2, h / 2 + 10);
-    return;
-  }
-
-  const now = Date.now();
-  const rangeMs = _chartRange === '7d' ? 7*24*60*60*1000 : _chartRange === '24h' ? 24*60*60*1000 : 6*60*60*1000;
-  const cutoff = now - rangeMs;
-  const data = history.filter(p => p.ts >= cutoff);
-
-  // Update data count badge
-  const countBadge = document.getElementById('chart-data-count');
-  if (countBadge) countBadge.textContent = `${data.length} точек`;
-  if (data.length < 2) {
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
-    ctx.font = '500 13px Inter, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Нет данных за выбранный период', w / 2, h / 2);
-    return;
-  }
-
-  // Layout
-  const padL = 48, padR = 20, padT = 20, padB = 44;
-  const cW = w - padL - padR;
-  const cH = h - padT - padB;
-
-  const maxOnline = Math.max(1, ...data.map(p => p.online || 0));
-  const maxSuspect = Math.max(0, ...data.map(p => p.suspects || 0));
-  const avgOnline = Math.round(data.reduce((s, p) => s + (p.online || 0), 0) / data.length);
-  const maxYOnline = Math.ceil(maxOnline * 1.15); // 15% headroom
-
-  // Colors
-  const onlineStroke = isDark ? '#818cf8' : '#6366f1';
-  const onlineGlow = isDark ? 'rgba(129,140,248,0.35)' : 'rgba(99,102,241,0.25)';
-  const suspectStroke = isDark ? '#f87171' : '#ef4444';
-  const suspectGlow = isDark ? 'rgba(248,113,113,0.3)' : 'rgba(239,68,68,0.2)';
-  const gridColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)';
-  const textColor = isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
-  const avgColor = isDark ? 'rgba(129,140,248,0.2)' : 'rgba(99,102,241,0.15)';
-
-  ctx.clearRect(0, 0, w, h);
-
-  // Helper: x/y from data index
-  const xAt = (i) => padL + (i / (data.length - 1)) * cW;
-  const yOnline = (v) => padT + cH - (v / maxYOnline) * cH;
-  const ySuspect = (v) => maxSuspect > 0 ? padT + cH - (v / Math.max(1, maxSuspect) * 0.4) * cH : padT + cH;
-
-  // ── Grid ──
-  ctx.setLineDash([2, 6]);
-  ctx.strokeStyle = gridColor;
-  ctx.lineWidth = 1;
-  const gridSteps = 4;
-  for (let i = 0; i <= gridSteps; i++) {
-    const y = padT + (cH / gridSteps) * i;
-    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
-  }
-  ctx.setLineDash([]);
-
-  // ── Average line ──
-  const avgY = yOnline(avgOnline);
-  ctx.setLineDash([6, 6]);
-  ctx.strokeStyle = avgColor;
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(padL, avgY); ctx.lineTo(w - padR, avgY); ctx.stroke();
-  ctx.setLineDash([]);
-  // AVG label
-  ctx.fillStyle = isDark ? 'rgba(129,140,248,0.4)' : 'rgba(99,102,241,0.5)';
-  ctx.font = '600 9px Inter, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText(`avg ${avgOnline}`, padL + 4, avgY - 4);
-
-  // ── Y-axis labels ──
-  ctx.font = '500 10px JetBrains Mono, monospace';
-  ctx.fillStyle = textColor;
-  ctx.textAlign = 'right';
-  for (let i = 0; i <= gridSteps; i++) {
-    const y = padT + (cH / gridSteps) * i;
-    const val = Math.round(maxYOnline * (1 - i / gridSteps));
-    ctx.fillText(val, padL - 8, y + 3);
-  }
-
-  // ── X-axis labels ──
-  ctx.textAlign = 'center';
-  const labelCount = Math.min(7, data.length);
-  const labelStep = Math.max(1, Math.floor(data.length / labelCount));
-  for (let i = 0; i < data.length; i += labelStep) {
-    const x = xAt(i);
-    const d = new Date(data[i].ts);
-    const label = _chartRange === '7d'
-      ? `${d.getDate()}.${String(d.getMonth()+1).padStart(2,'0')}`
-      : `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    ctx.fillText(label, x, h - padB + 16);
-  }
-
-  // ── Build smooth bezier path ──
-  function buildPath(points) {
-    const path = new Path2D();
-    if (points.length < 2) return path;
-    path.moveTo(points[0][0], points[0][1]);
-    for (let i = 1; i < points.length; i++) {
-      const [x, y] = points[i];
-      const [px, py] = points[i - 1];
-      const cpx = (px + x) / 2;
-      path.bezierCurveTo(cpx, py, cpx, y, x, y);
-    }
-    return path;
-  }
-
-  // ── Online area ──
-  const onlinePoints = data.map((p, i) => [xAt(i), yOnline(p.online || 0)]);
-  const onlinePath = buildPath(onlinePoints);
-
-  // Gradient fill
-  const onlineGrad = ctx.createLinearGradient(0, padT, 0, padT + cH);
-  onlineGrad.addColorStop(0, isDark ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.15)');
-  onlineGrad.addColorStop(0.6, isDark ? 'rgba(99,102,241,0.06)' : 'rgba(99,102,241,0.04)');
-  onlineGrad.addColorStop(1, 'rgba(99,102,241,0)');
-
-  // Fill area
-  const areaPath = new Path2D();
-  areaPath.moveTo(onlinePoints[0][0], padT + cH);
-  areaPath.lineTo(onlinePoints[0][0], onlinePoints[0][1]);
-  for (let i = 1; i < onlinePoints.length; i++) {
-    const [x, y] = onlinePoints[i];
-    const [px, py] = onlinePoints[i - 1];
-    const cpx = (px + x) / 2;
-    areaPath.bezierCurveTo(cpx, py, cpx, y, x, y);
-  }
-  areaPath.lineTo(onlinePoints[onlinePoints.length - 1][0], padT + cH);
-  areaPath.closePath();
-  ctx.fillStyle = onlineGrad;
-  ctx.fill(areaPath);
-
-  // Line glow
-  ctx.save();
-  ctx.shadowColor = onlineGlow;
-  ctx.shadowBlur = 12;
-  ctx.strokeStyle = onlineStroke;
-  ctx.lineWidth = 2.5;
-  ctx.lineJoin = 'round';
-  ctx.stroke(onlinePath);
-  ctx.restore();
-
-  // Line crisp
-  ctx.strokeStyle = onlineStroke;
-  ctx.lineWidth = 2;
-  ctx.stroke(onlinePath);
-
-  // ── Suspect area (if any) ──
-  if (maxSuspect > 0) {
-    const suspectPoints = data.map((p, i) => [xAt(i), ySuspect(p.suspects || 0)]);
-    const suspPath = buildPath(suspectPoints);
-
-    // Gradient fill
-    const suspGrad = ctx.createLinearGradient(0, padT, 0, padT + cH);
-    suspGrad.addColorStop(0, isDark ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.1)');
-    suspGrad.addColorStop(1, 'rgba(239,68,68,0)');
-
-    const suspArea = new Path2D();
-    suspArea.moveTo(suspectPoints[0][0], padT + cH);
-    suspArea.lineTo(suspectPoints[0][0], suspectPoints[0][1]);
-    for (let i = 1; i < suspectPoints.length; i++) {
-      const [x, y] = suspectPoints[i];
-      const [px, py] = suspectPoints[i - 1];
-      const cpx = (px + x) / 2;
-      suspArea.bezierCurveTo(cpx, py, cpx, y, x, y);
-    }
-    suspArea.lineTo(suspectPoints[suspectPoints.length - 1][0], padT + cH);
-    suspArea.closePath();
-    ctx.fillStyle = suspGrad;
-    ctx.fill(suspArea);
-
-    ctx.save();
-    ctx.shadowColor = suspectGlow;
-    ctx.shadowBlur = 8;
-    ctx.strokeStyle = suspectStroke;
-    ctx.lineWidth = 2;
-    ctx.stroke(suspPath);
-    ctx.restore();
-    ctx.strokeStyle = suspectStroke;
-    ctx.lineWidth = 1.5;
-    ctx.stroke(suspPath);
-
-    // Current suspect dot
-    const lastSusp = suspectPoints[suspectPoints.length - 1];
-    if (data[data.length - 1].suspects > 0) {
-      ctx.beginPath();
-      ctx.arc(lastSusp[0], lastSusp[1], 4, 0, Math.PI * 2);
-      ctx.fillStyle = suspectStroke;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(lastSusp[0], lastSusp[1], 7, 0, Math.PI * 2);
-      ctx.strokeStyle = isDark ? 'rgba(248,113,113,0.3)' : 'rgba(239,68,68,0.2)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-  }
-
-  // ── Current value dot (online) ──
-  const lastPt = onlinePoints[onlinePoints.length - 1];
-  // Outer ring (glow)
-  ctx.beginPath();
-  ctx.arc(lastPt[0], lastPt[1], 8, 0, Math.PI * 2);
-  ctx.fillStyle = isDark ? 'rgba(129,140,248,0.15)' : 'rgba(99,102,241,0.12)';
-  ctx.fill();
-  // Inner ring
-  ctx.beginPath();
-  ctx.arc(lastPt[0], lastPt[1], 4.5, 0, Math.PI * 2);
-  ctx.fillStyle = onlineStroke;
-  ctx.fill();
-  // White core
-  ctx.beginPath();
-  ctx.arc(lastPt[0], lastPt[1], 2, 0, Math.PI * 2);
-  ctx.fillStyle = isDark ? '#fff' : '#fff';
-  ctx.fill();
-
-  // ── Stats bar at bottom ──
-  const statsY = h - 10;
-  ctx.font = '600 10px Inter, sans-serif';
-  const lastVal = data[data.length - 1].online || 0;
-  const statsItems = [
-    { label: 'Сейчас', value: lastVal, color: onlineStroke },
-    { label: 'Max', value: maxOnline, color: isDark ? 'rgba(52,211,153,0.8)' : '#059669' },
-    { label: 'Avg', value: avgOnline, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)' },
-  ];
-  if (maxSuspect > 0) {
-    statsItems.push({ label: '⚠ Max', value: maxSuspect, color: suspectStroke });
-  }
-  ctx.textAlign = 'center';
-  const statsW = cW / statsItems.length;
-  statsItems.forEach((item, i) => {
-    const sx = padL + statsW * i + statsW / 2;
-    ctx.fillStyle = item.color;
-    ctx.font = '800 11px JetBrains Mono, monospace';
-    ctx.fillText(item.value, sx, statsY - 1);
-    ctx.fillStyle = textColor;
-    ctx.font = '500 9px Inter, sans-serif';
-    ctx.fillText(item.label, sx, statsY + 10);
-  });
-
-  // ── Hover tooltip ──
-  if (!canvas._hasHover) {
-    canvas._hasHover = true;
-    canvas.style.cursor = 'crosshair';
-    canvas.addEventListener('mousemove', (e) => {
-      const r = canvas.getBoundingClientRect();
-      const mx = e.clientX - r.left;
-      if (mx < padL || mx > w - padR) { _chartHoverIdx = -1; renderActivityChart(); return; }
-      const ratio = (mx - padL) / cW;
-      const idx = Math.round(ratio * (data.length - 1));
-      if (idx >= 0 && idx < data.length && idx !== _chartHoverIdx) {
-        _chartHoverIdx = idx;
-        renderActivityChart();
-      }
-    });
-    canvas.addEventListener('mouseleave', () => {
-      _chartHoverIdx = -1;
-      renderActivityChart();
-    });
-  }
-
-  // Draw hover crosshair + tooltip
-  if (_chartHoverIdx >= 0 && _chartHoverIdx < data.length) {
-    const hx = xAt(_chartHoverIdx);
-    const hp = data[_chartHoverIdx];
-    const hy = yOnline(hp.online || 0);
-
-    // Vertical line
-    ctx.setLineDash([3, 3]);
-    ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(hx, padT); ctx.lineTo(hx, padT + cH); ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Dot on line
-    ctx.beginPath();
-    ctx.arc(hx, hy, 5, 0, Math.PI * 2);
-    ctx.fillStyle = onlineStroke;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(hx, hy, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#fff';
-    ctx.fill();
-
-    // Tooltip
-    const d = new Date(hp.ts);
-    const timeStr = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    const dateStr = `${d.getDate()}.${String(d.getMonth()+1).padStart(2,'0')}`;
-    const tipLines = [`${dateStr}  ${timeStr}`, `Онлайн: ${hp.online || 0}`];
-    if ((hp.suspects || 0) > 0) tipLines.push(`Подозр: ${hp.suspects}`);
-    if ((hp.ips || 0) > 0) tipLines.push(`IP: ${hp.ips}`);
-
-    const tipFont = '600 11px Inter, sans-serif';
-    ctx.font = tipFont;
-    const tipW = Math.max(...tipLines.map(l => ctx.measureText(l).width)) + 20;
-    const tipH = tipLines.length * 17 + 12;
-    let tipX = hx + 12;
-    if (tipX + tipW > w - 10) tipX = hx - tipW - 12;
-    let tipY = hy - tipH / 2;
-    if (tipY < padT) tipY = padT;
-    if (tipY + tipH > padT + cH) tipY = padT + cH - tipH;
-
-    // Tooltip bg
-    ctx.fillStyle = isDark ? 'rgba(20,22,40,0.92)' : 'rgba(255,255,255,0.95)';
-    ctx.strokeStyle = isDark ? 'rgba(129,140,248,0.3)' : 'rgba(99,102,241,0.2)';
-    ctx.lineWidth = 1;
-    const tipR = 8;
-    ctx.beginPath();
-    ctx.roundRect(tipX, tipY, tipW, tipH, tipR);
-    ctx.fill();
-    ctx.stroke();
-
-    // Tooltip text
-    ctx.textAlign = 'left';
-    tipLines.forEach((line, li) => {
-      ctx.fillStyle = li === 0 ? textColor : (line.includes('Подозр') ? suspectStroke : (isDark ? '#e2e8f0' : '#1e293b'));
-      ctx.font = li === 0 ? '500 10px Inter, sans-serif' : tipFont;
-      ctx.fillText(line, tipX + 10, tipY + 16 + li * 17);
-    });
-  }
+  if (!chartControls) return;
+  chartControls.renderActivityChart();
 }
 
 // ─── Sound Notifications ──────────────────────────────────────────
@@ -5963,44 +5448,9 @@ function exportData(type, format) {
 
 // ─── Sparkline Renderer ──────────────────────────────────────────
 function renderSparkline(containerId, values, color = '#818cf8') {
-  const container = document.getElementById(containerId);
-  if (!container || values.length < 2) return;
-
-  let svg = container.querySelector('.sparkline-svg');
-  if (!svg) {
-    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('class', 'sparkline-svg');
-    svg.setAttribute('viewBox', '0 0 80 24');
-    svg.setAttribute('preserveAspectRatio', 'none');
-    svg.style.cssText = 'position:absolute;bottom:0;left:0;right:0;width:100%;height:28px;opacity:0.25;pointer-events:none;z-index:0;';
-    container.style.position = 'relative';
-    container.appendChild(svg);
-  }
-
-  const w = 80, h = 24;
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const range = max - min || 1;
-  const step = w / (values.length - 1);
-
-  const points = values.map((v, i) => {
-    const x = i * step;
-    const y = h - ((v - min) / range) * (h - 2) - 1;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-
-  const fillPoints = [`0,${h}`, ...points, `${w},${h}`].join(' ');
-
-  svg.innerHTML = `
-    <defs>
-      <linearGradient id="sg-${containerId}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${color}" stop-opacity="0.4"/>
-        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
-      </linearGradient>
-    </defs>
-    <polygon points="${fillPoints}" fill="url(#sg-${containerId})" />
-    <polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-  `;
+  ensureFrontendModules().then(({ chartsModule }) => {
+    chartsModule.renderSparkline(containerId, values, color);
+  }).catch((e) => debugLog('[sparkline] failed:', e.message));
 }
 
 // ─── Hotkeys ─────────────────────────────────────────────────────

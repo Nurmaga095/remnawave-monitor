@@ -1356,8 +1356,8 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 /* ── Activity Chart Widget ── */
 .chart-panel { border-image: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(167,139,250,0.1), rgba(239,68,68,0.1)) 1; position: relative; overflow: hidden; }
 .chart-panel::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(99,102,241,0.3), rgba(167,139,250,0.2), transparent); }
-.activity-chart-wrap { padding: 8px 16px 0; position: relative; }
-.activity-chart-wrap canvas { display: block; width: 100%; border-radius: 8px; }
+.activity-chart-wrap { padding: 8px 16px 0; position: relative; height: 220px; min-height: 220px; }
+.activity-chart-wrap canvas { display: block; width: 100% !important; height: 100% !important; border-radius: 8px; }
 .chart-legend { display: flex; align-items: center; gap: 22px; padding: 8px 16px 12px; justify-content: center; }
 .chart-legend-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text2); font-weight: 600; }
 .chart-legend-muted { opacity: 0.6; }

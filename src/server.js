@@ -38,7 +38,17 @@ const AUDIT_LOG_RETENTION_DAYS = Number(process.env.AUDIT_LOG_RETENTION_DAYS || 
 const ACTIVITY_HISTORY_RETENTION_DAYS = Number(process.env.ACTIVITY_HISTORY_RETENTION_DAYS || 7);
 
 const PUBLIC_DIR = path.join(PROJECT_ROOT, 'public');
-const PUBLIC_FILES = new Set(['index.html', 'css/style.css', 'js/app.js', 'favicon.ico', 'favicon.svg']);
+const PUBLIC_FILES = new Set([
+  'index.html',
+  'css/style.css',
+  'js/app.js',
+  'js/api.js',
+  'js/charts.js',
+  'js/state.js',
+  'js/ui.js',
+  'favicon.ico',
+  'favicon.svg',
+]);
 const COOKIE_NAME = 'rwm_session';
 const ALLOWED_PROXY_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
