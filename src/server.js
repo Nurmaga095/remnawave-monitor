@@ -348,6 +348,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === '/api/drop-reconnect') {
+      await handleDropReconnect(req, res);
+      return;
+    }
+
     await serveStatic(req, res, pathname);
   } catch (e) {
     console.error('[server] unexpected error:', e);
@@ -923,6 +928,205 @@ async function handleFetchUserIps(req, res, parsedUrl) {
   }
 }
 
+// ─── Drop + Reconnect Analysis ──────────────────────────────────
+// Active sharing verification: drop connections → wait → re-collect IPs
+// If 3+ different IPs reconnect → 100% proof of key sharing
+async function handleDropReconnect(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (!requireActionRateLimit(req, res)) return;
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'Method not allowed' }, { Allow: 'POST' });
+    return;
+  }
+
+  if (!isRemnawaveConfigured()) {
+    sendJson(res, 500, { error: 'Remnawave API is not configured' });
+    return;
+  }
+
+  let body;
+  try { body = JSON.parse(await readBody(req)); } catch { sendJson(res, 400, { error: 'Invalid JSON' }); return; }
+  const userKey = String(body.userKey || '');
+  const userUuid = String(body.userUuid || body.uuid || userKey);
+  const waitSeconds = Math.min(180, Math.max(30, Number(body.waitSeconds || 90)));
+  if (!userKey) { sendJson(res, 400, { error: 'userKey is required' }); return; }
+
+  console.log(`[drop-reconnect] Starting analysis for ${userKey}, wait=${waitSeconds}s`);
+  store.recordAudit(APP_USERNAME, getClientIp(req), 'drop_reconnect_start', userKey, { waitSeconds });
+
+  try {
+    // Step 1: Collect current IPs from all nodes
+    const beforeIps = await collectUserIpsFromAllNodes(userUuid);
+    console.log(`[drop-reconnect] Before: ${beforeIps.length} IPs for ${userKey}`);
+
+    if (beforeIps.length === 0) {
+      sendJson(res, 200, {
+        ok: true,
+        verdict: 'offline',
+        reason: 'Пользователь не подключён ни к одной ноде',
+        before: { ips: [], count: 0 },
+        after: { ips: [], count: 0 },
+        reconnected: 0,
+      });
+      return;
+    }
+
+    // Step 2: Drop all connections
+    let dropResult = null;
+    try {
+      dropResult = await remnawaveApi('POST', '/api/ip-control/drop-connections', {
+        userUuid,
+      });
+      console.log(`[drop-reconnect] Drop response: ${dropResult.statusCode}`);
+    } catch (dropErr) {
+      // Try alternative format with tags array
+      try {
+        dropResult = await remnawaveApi('POST', '/api/ip-control/drop-connections', {
+          userUuid,
+          tags: [],
+        });
+      } catch (dropErr2) {
+        console.error(`[drop-reconnect] Drop failed:`, dropErr2.message);
+        sendJson(res, 500, {
+          error: `Ошибка сброса соединений: ${dropErr.message}. Возможно формат API изменился.`,
+          before: { ips: beforeIps.map(e => e.ip), count: beforeIps.length },
+        });
+        return;
+      }
+    }
+
+    // Step 3: Wait for reconnections
+    console.log(`[drop-reconnect] Waiting ${waitSeconds}s for reconnections...`);
+    await new Promise(r => setTimeout(r, waitSeconds * 1000));
+
+    // Step 4: Collect IPs again
+    const afterIps = await collectUserIpsFromAllNodes(userUuid);
+    console.log(`[drop-reconnect] After: ${afterIps.length} IPs for ${userKey}`);
+
+    // Step 5: Analyze
+    const beforeSet = new Set(beforeIps.map(e => e.ip));
+    const afterSet = new Set(afterIps.map(e => e.ip));
+    const allIps = new Set([...beforeSet, ...afterSet]);
+    const reconnectedIps = afterIps.map(e => e.ip);
+    const newIps = [...afterSet].filter(ip => !beforeSet.has(ip));
+    const reconnectedCount = afterSet.size;
+
+    let verdict, reason;
+    if (reconnectedCount === 0) {
+      verdict = 'offline';
+      reason = 'Никто не переподключился — пользователь оффлайн или ключ больше не используется';
+    } else if (reconnectedCount === 1) {
+      verdict = 'clean';
+      reason = 'Переподключился 1 IP — нормальное поведение одного пользователя';
+    } else if (reconnectedCount === 2) {
+      verdict = 'possible_clean';
+      reason = 'Переподключились 2 IP — может быть WiFi + мобильный (нормально)';
+    } else if (reconnectedCount <= 4) {
+      verdict = 'sharing_detected';
+      reason = `Переподключились ${reconnectedCount} разных IP — высокая вероятность шаринга ключа`;
+    } else {
+      verdict = 'mass_sharing';
+      reason = `Переподключились ${reconnectedCount} разных IP — массовый шаринг ключа`;
+    }
+
+    const result = {
+      ok: true,
+      verdict,
+      reason,
+      before: {
+        ips: beforeIps.map(e => ({ ip: e.ip, node: e.nodeUuid || null })),
+        count: beforeSet.size,
+      },
+      after: {
+        ips: afterIps.map(e => ({ ip: e.ip, node: e.nodeUuid || null })),
+        count: afterSet.size,
+      },
+      reconnected: reconnectedCount,
+      newIps,
+      totalUniqueIps: allIps.size,
+      waitSeconds,
+      timestamp: Date.now(),
+    };
+
+    store.recordAudit(APP_USERNAME, getClientIp(req), 'drop_reconnect_result', userKey, {
+      verdict,
+      beforeCount: beforeSet.size,
+      afterCount: afterSet.size,
+      reconnected: reconnectedCount,
+      waitSeconds,
+    });
+
+    // Auto-record incident event if sharing detected
+    if (verdict === 'sharing_detected' || verdict === 'mass_sharing') {
+      try {
+        store.recordIncidentEvent(userKey, 'drop_reconnect_proof', verdict, JSON.stringify({
+          beforeIps: [...beforeSet],
+          afterIps: [...afterSet],
+          reconnected: reconnectedCount,
+          timestamp: Date.now(),
+        }));
+      } catch (e) { /* ignore */ }
+    }
+
+    console.log(`[drop-reconnect] Result for ${userKey}: ${verdict} (${reconnectedCount} IPs reconnected)`);
+    sendJson(res, 200, result);
+  } catch (e) {
+    console.error('[drop-reconnect] error:', e.message);
+    sendJson(res, 500, { error: `Ошибка анализа: ${e.message}` });
+  }
+}
+
+// Helper: collect all IPs for a user UUID from all Remnawave nodes
+async function collectUserIpsFromAllNodes(userUuid) {
+  const allIps = [];
+  try {
+    const nodesResp = await remnawaveApi('GET', '/api/nodes');
+    const nodes = nodesResp.json?.response || [];
+    const nodeList = Array.isArray(nodes) ? nodes : (Array.isArray(nodesResp.json) ? nodesResp.json : []);
+
+    for (const node of nodeList) {
+      const nodeUuid = node.uuid || node.id;
+      if (!nodeUuid) continue;
+
+      try {
+        // Submit job
+        const jobResp = await remnawaveApi('POST', `/api/ip-control/fetch-users-ips/${nodeUuid}`, {});
+        const jobId = jobResp.json?.response?.jobId || jobResp.json?.jobId;
+        if (!jobId) continue;
+
+        // Poll for result (max 10s per node)
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 500));
+          const result = await remnawaveApi('GET', `/api/ip-control/fetch-users-ips/result/${jobId}`);
+          const data = result.json?.response || result.json;
+          if (data?.isCompleted) {
+            const resultData = data.result || data;
+            const users = Array.isArray(resultData.users) ? resultData.users : [];
+            for (const u of users) {
+              const uid = String(u.userId || u.id || '');
+              // Match by UUID or numeric ID
+              if (uid === userUuid || String(u.userUuid || '') === userUuid) {
+                const ips = Array.isArray(u.ips) ? u.ips : [];
+                for (const ipEntry of ips) {
+                  const ip = typeof ipEntry === 'string' ? ipEntry : (ipEntry && ipEntry.ip);
+                  if (ip) allIps.push({ ip, nodeUuid: String(nodeUuid) });
+                }
+              }
+            }
+            break;
+          }
+          if (data?.isFailed) break;
+        }
+      } catch (e) {
+        // Skip failed nodes
+      }
+    }
+  } catch (e) {
+    console.error('[collectUserIps] error:', e.message);
+  }
+  return allIps;
+}
 
 async function handleNotifyUser(req, res) {
   if (!requireAuth(req, res)) return;

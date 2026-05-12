@@ -46,6 +46,7 @@ const SIGNAL_NAMES_RU = {
   multi_platform_sub: 'Подписка с разных операционных систем',
   multi_device_sub: 'Много разных приложений обновляют подписку',
   sub_storm: 'Массовый запрос подписки за короткое время',
+  confirmed_simultaneous_ips: 'Подтверждённое превышение одновременных IP',
 };
 
 const PROVIDERS = {

@@ -2690,6 +2690,104 @@ async function fetchUserLiveIps(uuid) {
 }
 
 
+// ─── Drop + Reconnect Analysis ──────────────────────────────────
+function startDropReconnect(userKey, uuid) {
+  showConfirmDialog({
+    title: 'Проверить шаринг ключа?',
+    message: 'Будут сброшены ВСЕ текущие соединения этого пользователя.',
+    detail: 'Система подождёт 90 секунд, затем проверит сколько разных IP переподключились. Если 3+ IP — это доказательство шаринга.',
+    warning: 'Пользователь временно потеряет соединение (до 90 сек)!',
+    confirmText: 'Да, проверить',
+    confirmClass: 'confirm-btn-yes',
+    icon: 'ban',
+    onConfirm: () => executeDropReconnect(userKey, uuid),
+  });
+}
+
+async function executeDropReconnect(userKey, uuid) {
+  const btn = document.getElementById('drop-reconnect-btn');
+  const container = document.getElementById('drop-reconnect-results');
+  if (!container) return;
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<div class="spinner-small"></div> Сброс…'; }
+
+  const waitSeconds = 90;
+  container.innerHTML = `<div class="drop-progress">
+    <div class="drop-progress-icon">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-slow"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+    </div>
+    <div class="drop-progress-text">
+      <div class="drop-progress-title">Идёт проверка шаринга…</div>
+      <div class="drop-progress-desc">Соединения сброшены. Ожидаем переподключения.</div>
+      <div class="drop-progress-timer" id="drop-timer">~${waitSeconds} сек</div>
+    </div>
+  </div>`;
+
+  const startTime = Date.now();
+  const timerInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const remaining = Math.max(0, waitSeconds + 30 - elapsed);
+    const timerEl = document.getElementById('drop-timer');
+    if (timerEl) timerEl.textContent = remaining > 0 ? '~' + remaining + ' сек' : 'Анализ результатов…';
+  }, 1000);
+
+  try {
+    const resp = await fetch('/api/drop-reconnect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ userKey, userUuid: uuid, waitSeconds }),
+    });
+    clearInterval(timerInterval);
+    if (resp.status === 401) { await handleAuthExpired(); return; }
+    const data = await resp.json();
+    if (data.error) {
+      container.innerHTML = '<div class="drop-result drop-result-error"><div class="drop-result-icon">\u26A0\uFE0F</div><div><div class="drop-result-title">\u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438</div><div class="drop-result-desc">' + esc(data.error) + '</div></div></div>';
+      return;
+    }
+    container.innerHTML = renderDropReconnectResult(data);
+    const isClean = data.verdict === 'clean' || data.verdict === 'possible_clean';
+    toast('Проверка завершена: ' + (isClean ? 'Чисто' : data.verdict === 'sharing_detected' ? 'Шаринг!' : data.reason), isClean ? 'ok' : 'error');
+  } catch (e) {
+    clearInterval(timerInterval);
+    container.innerHTML = '<div class="drop-result drop-result-error"><div class="drop-result-icon">\u26A0\uFE0F</div><div><div class="drop-result-title">\u041e\u0448\u0438\u0431\u043a\u0430</div><div class="drop-result-desc">' + esc(e.message) + '</div></div></div>';
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = IC._s('<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/>', 14) + ' Проверить шаринг';
+    }
+  }
+}
+
+function renderDropReconnectResult(data) {
+  const verdictMap = {
+    offline: { icon: '\uD83D\uDCA4', cls: 'neutral', label: '\u041e\u0444\u0444\u043b\u0430\u0439\u043d' },
+    clean: { icon: '\u2705', cls: 'clean', label: '\u0427\u0438\u0441\u0442\u043e' },
+    possible_clean: { icon: '\u2705', cls: 'clean', label: '\u0412\u0435\u0440\u043e\u044f\u0442\u043d\u043e \u0447\u0438\u0441\u0442\u043e' },
+    sharing_detected: { icon: '\uD83D\uDD34', cls: 'danger', label: '\u0428\u0430\u0440\u0438\u043d\u0433 \u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d' },
+    mass_sharing: { icon: '\uD83D\uDD34', cls: 'danger', label: '\u041c\u0430\u0441\u0441\u043e\u0432\u044b\u0439 \u0448\u0430\u0440\u0438\u043d\u0433' },
+  };
+  const v = verdictMap[data.verdict] || verdictMap.offline;
+  const beforeIps = (data.before && data.before.ips || []).map(function(e) { return '<code>' + esc(e.ip) + '</code>'; }).join(' ');
+  const afterIps = (data.after && data.after.ips || []).map(function(e) { return '<code>' + esc(e.ip) + '</code>'; }).join(' ');
+  const newIps = (data.newIps || []).map(function(ip) { return '<code class="drop-new-ip">' + esc(ip) + '</code>'; }).join(' ');
+  return '<div class="drop-result drop-result-' + v.cls + '">'
+    + '<div class="drop-result-header"><div class="drop-result-icon">' + v.icon + '</div><div>'
+    + '<div class="drop-result-title">' + v.label + '</div>'
+    + '<div class="drop-result-desc">' + esc(data.reason) + '</div></div></div>'
+    + '<div class="drop-result-grid">'
+    + '<div class="drop-result-kpi"><div class="drop-kpi-value">' + (data.before && data.before.count || 0) + '</div><div class="drop-kpi-label">IP \u0434\u043e</div></div>'
+    + '<div class="drop-result-kpi"><div class="drop-kpi-value drop-kpi-' + (data.reconnected >= 3 ? 'danger' : 'ok') + '">' + (data.reconnected || 0) + '</div><div class="drop-kpi-label">IP \u043f\u043e\u0441\u043b\u0435</div></div>'
+    + '<div class="drop-result-kpi"><div class="drop-kpi-value">' + (data.totalUniqueIps || 0) + '</div><div class="drop-kpi-label">\u0412\u0441\u0435\u0433\u043e</div></div>'
+    + '<div class="drop-result-kpi"><div class="drop-kpi-value">' + (data.waitSeconds || 0) + '\u0441</div><div class="drop-kpi-label">\u041e\u0436\u0438\u0434.</div></div>'
+    + '</div>'
+    + (beforeIps ? '<div class="drop-ip-section"><span class="drop-ip-label">\u0414\u043e \u0441\u0431\u0440\u043e\u0441\u0430:</span>' + beforeIps + '</div>' : '')
+    + (afterIps ? '<div class="drop-ip-section"><span class="drop-ip-label">\u041f\u043e\u0441\u043b\u0435:</span>' + afterIps + '</div>' : '')
+    + (newIps ? '<div class="drop-ip-section"><span class="drop-ip-label">\u041d\u043e\u0432\u044b\u0435 IP:</span>' + newIps + '</div>' : '')
+    + '<div class="drop-result-ts">' + new Date(data.timestamp).toLocaleString('ru-RU') + '</div>'
+    + '</div>';
+}
+
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeUserModal();
 });
@@ -3571,14 +3669,21 @@ function userCardHtml(u) {
             <div class="uc-section" style="margin:0">
               <div class="uc-section-head">
                 <span>IP-адреса (xray)</span>
-                <button class="btn-mini btn-accent" onclick="fetchUserLiveIps('${escAttr(uuid)}')" id="live-ip-btn">
-                  ${IC._s('<path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', 14)}
-                  Получить IP
-                </button>
+                <div style="display:flex;gap:6px">
+                  <button class="btn-mini btn-accent" onclick="fetchUserLiveIps('${escAttr(uuid)}')" id="live-ip-btn">
+                    ${IC._s('<path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', 14)}
+                    Получить IP
+                  </button>
+                  <button class="btn-mini btn-warn" onclick="startDropReconnect('${escAttr(userKey)}', '${escAttr(uuid)}')" id="drop-reconnect-btn" title="Сбросить соединения и проверить сколько IP переподключится">
+                    ${IC._s('<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/>', 14)}
+                    Проверить шаринг
+                  </button>
+                </div>
               </div>
               <div id="live-ip-results">
                 ${freshIps.length > 0 ? `<div class="ip-rows">${ipRowsHtml}${moreIps}</div>` : '<div class="empty-state sm"><p>Нажмите кнопку для получения реальных IP</p></div>'}
               </div>
+              <div id="drop-reconnect-results"></div>
             </div>
 
             <!-- HWID Devices from API -->

@@ -1,14 +1,14 @@
-// ─── Server-side Detection Module v6 — Premium Multi-Signal ────
-// 14 сигналов, 4 категории, 4 уровня:
+// ─── Server-side Detection Module v7 — Premium Multi-Signal ────
+// 15 сигналов, 4 категории, 4 уровня:
 //
-// DETERMINISTIC: hwid_over_limit, app_stability_breakdown
+// DETERMINISTIC: hwid_over_limit, app_stability_breakdown, confirmed_simultaneous_ips
 // STRONG: hwid_churn, temporal_247, multi_city, impossible_travel, velocity_extreme,
 //         fingerprint_cluster, simultaneous_distinct_networks, extracted_key_suspected,
-//         multi_node_simultaneous
+//         multi_node_simultaneous, confirmed_simultaneous_ips (when excess=1)
 // WEAK: suspicious_travel, velocity_high, fingerprint_match, isp_mix, behavior_shift,
 //       multi_platform_sub, multi_device_sub, schedule_pattern
 //
-// critical (60-100) — HWID > лимит
+// critical (60-100) — HWID > лимит or confirmed IP excess
 // high     (40-59)  — 2+ strong сигнала из разных типов доказательств
 // warning  (20-39)  — 1 strong или 3+ weak
 // clean    (0-19)   — нет угроз
@@ -182,6 +182,10 @@ function createDetector(options = {}) {
     // ═══ STRONG: Subscription Storm (#12) ═══
     const subStormSignal = detectSubStorm(u, state, keys);
     if (subStormSignal) signals.push(subStormSignal);
+
+    // ═══ DETERMINISTIC/STRONG: Confirmed Simultaneous IPs (#14) ═══
+    const simIpsSignal = detectConfirmedSimultaneousIps(u, state, keys, hwidLimit);
+    if (simIpsSignal) signals.push(simIpsSignal);
 
     const context = buildContext(u, state);
     return { signals, context };
@@ -826,6 +830,8 @@ function createDetector(options = {}) {
       return 'temporal';
     if (['simultaneous_distinct_networks', 'extracted_key_suspected', 'multi_node_simultaneous'].includes(id))
       return 'network';
+    if (['confirmed_simultaneous_ips'].includes(id))
+      return 'connection_count';
     if (['velocity_extreme', 'velocity_high'].includes(id))
       return 'traffic';
     if (['fingerprint_cluster', 'fingerprint_match', 'shared_ip_cluster'].includes(id))
@@ -893,6 +899,17 @@ function createDetector(options = {}) {
         label: 'confirmed_collective_account',
         reason: 'Клиентский build_id меняется быстрее недельного цикла и одновременно прыгает между платформами.',
       };
+    }
+
+    if (ids.has('confirmed_simultaneous_ips')) {
+      const simSignal = active.find(s => s.id === 'confirmed_simultaneous_ips');
+      if (simSignal && simSignal.category === 'deterministic') {
+        return {
+          level: 'confirmed',
+          label: 'confirmed_ip_sharing',
+          reason: simSignal.reason || 'Подтверждённое превышение одновременных IP — 100% доказательство шаринга.',
+        };
+      }
     }
 
     const networkProof = ['extracted_key_suspected', 'simultaneous_distinct_networks', 'multi_node_simultaneous']
@@ -1383,6 +1400,115 @@ function createDetector(options = {}) {
     });
     if (topEntry) return topEntry.devicesCount || topEntry.count || 0;
     return u.hwidDevicesCount || u.hwid_count || 0;
+  }
+
+  // ─── #14 Confirmed Simultaneous IPs Detection ─────────────────
+  // Counts unique concurrent IPs across consecutive detection snapshots.
+  // Does NOT depend on geo-IP, ASN, or country data.
+  // One person = max ~2 simultaneous IPs (WiFi + mobile).
+  // If confirmed IPs > device_limit + 1 in 2+ consecutive snapshots → sharing.
+  function detectConfirmedSimultaneousIps(u, state, keys, hwidLimit) {
+    const history = getDetectionHistory(state);
+    if (history.length < 2) return null;
+
+    // Collect per-snapshot IP sets for this user (recent 12 snapshots ≈ ~1 hour)
+    const recentHistory = history.slice(-12);
+    const snapshotIps = [];
+
+    for (const snap of recentHistory) {
+      const ips = new Set();
+      for (const key of keys) {
+        const userIps = snap.ips && snap.ips[key];
+        if (!Array.isArray(userIps)) continue;
+        for (const entry of normalizeIpEntries(userIps)) {
+          const ip = getEntryIp(entry);
+          if (ip) ips.add(ip);
+        }
+      }
+      snapshotIps.push(ips);
+    }
+
+    // Also count current live IPs
+    const currentIps = new Set();
+    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+      const ip = getEntryIp(entry);
+      if (ip) currentIps.add(ip);
+    }
+    if (currentIps.size > 0) snapshotIps.push(currentIps);
+
+    // The baseline: one person can legitimately have WiFi + mobile = 2 IPs
+    // So we use device_limit + 1 as the threshold to be generous
+    const threshold = hwidLimit + 1;
+
+    // Count snapshots where unique IPs exceed threshold
+    let overThresholdCount = 0;
+    let maxIps = 0;
+    let consecutiveExcess = 0;
+    let maxConsecutive = 0;
+
+    for (let i = 0; i < snapshotIps.length; i++) {
+      const ipCount = snapshotIps[i].size;
+      if (ipCount > maxIps) maxIps = ipCount;
+
+      if (ipCount > threshold) {
+        overThresholdCount++;
+        consecutiveExcess++;
+        if (consecutiveExcess > maxConsecutive) maxConsecutive = consecutiveExcess;
+      } else {
+        consecutiveExcess = 0;
+      }
+    }
+
+    if (maxIps <= threshold) return null;
+
+    // Find confirmed IPs: IPs that appear in 2+ consecutive snapshots
+    // (not just transitional/momentary connections)
+    const confirmedIps = new Set();
+    for (let i = 1; i < snapshotIps.length; i++) {
+      for (const ip of snapshotIps[i]) {
+        if (snapshotIps[i - 1].has(ip)) {
+          confirmedIps.add(ip);
+        }
+      }
+    }
+
+    const confirmedCount = confirmedIps.size;
+    const excess = maxIps - hwidLimit;
+
+    // DETERMINISTIC: confirmed IPs > limit + 1 AND seen in 2+ consecutive snapshots
+    if (confirmedCount > threshold && maxConsecutive >= 2) {
+      return {
+        id: 'confirmed_simultaneous_ips',
+        category: 'deterministic',
+        active: true,
+        points: Math.min(45, excess * 12),
+        reason: `${confirmedCount} подтверждённых одновременных IP (лимит ${hwidLimit}) в ${maxConsecutive} снимках подряд — шаринг ключа`,
+      };
+    }
+
+    // STRONG: maxIps > threshold in multiple non-consecutive snapshots
+    if (overThresholdCount >= 3 && maxIps > threshold) {
+      return {
+        id: 'confirmed_simultaneous_ips',
+        category: 'strong',
+        active: true,
+        points: Math.min(30, excess * 10),
+        reason: `до ${maxIps} одновременных IP (лимит ${hwidLimit}) в ${overThresholdCount} снимках за час`,
+      };
+    }
+
+    // STRONG: even 2 snapshots with excess is notable
+    if (maxConsecutive >= 2 && maxIps > threshold) {
+      return {
+        id: 'confirmed_simultaneous_ips',
+        category: 'strong',
+        active: true,
+        points: Math.min(25, excess * 8),
+        reason: `${maxIps} IP одновременно (лимит ${hwidLimit}), подтверждено в ${maxConsecutive} снимках подряд`,
+      };
+    }
+
+    return null;
   }
 
   return { analyze };
