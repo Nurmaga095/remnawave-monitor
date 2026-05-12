@@ -363,6 +363,31 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname === '/api/user-metadata') {
+      await handleUserMetadata(req, res, parsedUrl);
+      return;
+    }
+
+    if (pathname === '/api/hwid-stats') {
+      await handleHwidStats(req, res);
+      return;
+    }
+
+    if (pathname === '/api/srh-stats') {
+      await handleSrhStats(req, res);
+      return;
+    }
+
+    if (pathname === '/api/node-metrics') {
+      await handleNodeMetrics(req, res);
+      return;
+    }
+
+    if (pathname === '/api/user-disable') {
+      await handleUserDisable(req, res);
+      return;
+    }
+
     await serveStatic(req, res, pathname);
   } catch (e) {
     console.error('[server] unexpected error:', e);
@@ -935,6 +960,95 @@ async function handleUserHwidDevices(req, res, parsedUrl) {
     sendJson(res, 200, { devices: Array.isArray(devices) ? devices : [] });
   } catch (e) {
     console.error('[user-hwid-devices] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── User Metadata (Read/Write to Remnawave Panel) ──────────────
+async function handleUserMetadata(req, res, parsedUrl) {
+  if (!requireAuth(req, res)) return;
+  const uuid = parsedUrl.searchParams.get('uuid') || '';
+  if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
+  try {
+    if (req.method === 'GET') {
+      const resp = await remnawaveApi('GET', `/api/metadata/user/${uuid}`);
+      sendJson(res, 200, resp.json?.response || {});
+    } else if (req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const resp = await remnawaveApi('POST', `/api/metadata/user/${uuid}`, body);
+      sendJson(res, 200, resp.json?.response || { ok: true });
+    } else {
+      sendJson(res, 405, { error: 'Method not allowed' });
+    }
+  } catch (e) {
+    console.error('[user-metadata] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── HWID Stats ──────────────────────────────────────────────
+async function handleHwidStats(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  try {
+    const resp = await remnawaveApi('GET', '/api/hwid/devices/stats');
+    sendJson(res, 200, resp.json?.response || {});
+  } catch (e) {
+    console.error('[hwid-stats] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── SRH Stats ──────────────────────────────────────────────
+async function handleSrhStats(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  try {
+    const resp = await remnawaveApi('GET', '/api/subscription-request-history/stats');
+    sendJson(res, 200, resp.json?.response || {});
+  } catch (e) {
+    console.error('[srh-stats] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── Node Metrics ───────────────────────────────────────────
+async function handleNodeMetrics(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  try {
+    const resp = await remnawaveApi('GET', '/api/system/nodes/metrics');
+    sendJson(res, 200, resp.json?.response || {});
+  } catch (e) {
+    console.error('[node-metrics] error:', e.message);
+    sendJson(res, 500, { error: e.message });
+  }
+}
+
+// ─── User Disable (Direct Remnawave API) ──────────────────────
+async function handleUserDisable(req, res) {
+  if (!requireAuth(req, res)) return;
+  if (req.method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
+  try {
+    const body = JSON.parse(await readBody(req));
+    const uuid = String(body.uuid || '');
+    const action = body.action === 'enable' ? 'enable' : 'disable';
+    if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
+    const resp = await remnawaveApi('POST', `/api/users/${uuid}/actions/${action}`);
+    if (resp.statusCode >= 200 && resp.statusCode < 300) {
+      const clientIp = getClientIp(req);
+      store.recordAudit(APP_USERNAME, clientIp, `user_${action}`, uuid, { reason: body.reason || null });
+      if (action === 'disable') {
+        store.banUser(uuid, body.reason || 'Auto-disabled via monitor');
+      } else {
+        store.unbanUser(uuid);
+      }
+      sendJson(res, 200, { ok: true, action, uuid });
+    } else {
+      sendJson(res, resp.statusCode || 500, { error: `Remnawave API returned ${resp.statusCode}` });
+    }
+  } catch (e) {
+    console.error('[user-disable] error:', e.message);
     sendJson(res, 500, { error: e.message });
   }
 }

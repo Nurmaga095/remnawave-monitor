@@ -2788,6 +2788,140 @@ function renderDropReconnectResult(data) {
     + '</div>';
 }
 
+// ─── Live SRH from Remnawave Panel ──────────────────────────────
+async function fetchLiveSrh(uuid) {
+  const container = document.getElementById('live-srh-results');
+  if (!container) return;
+  container.innerHTML = '<div class="loading-state" style="padding:12px"><div class="spinner-large"></div><p>Загрузка SRH из панели…</p></div>';
+  try {
+    const resp = await fetch('/api/user-srh-live?uuid=' + encodeURIComponent(uuid));
+    if (resp.status === 401) { await handleAuthExpired(); return; }
+    const data = await resp.json();
+    if (data.error) { container.innerHTML = '<div class="empty-state sm"><p>Ошибка: ' + esc(data.error) + '</p></div>'; return; }
+    const records = data.records || [];
+    if (records.length === 0) {
+      container.innerHTML = '<div class="empty-state sm"><p>Нет данных SRH в панели</p></div>';
+      return;
+    }
+    // Analyze the live SRH data
+    const platforms = new Set();
+    const buildIds = new Set();
+    const userAgents = new Set();
+    const ips = new Set();
+    for (const r of records) {
+      if (r.platform) platforms.add(r.platform);
+      if (r.buildId) buildIds.add(r.buildId);
+      if (r.userAgent) userAgents.add(r.userAgent);
+      if (r.ip) ips.add(r.ip);
+    }
+    let html = '<div class="live-srh-panel">';
+    html += '<div class="live-srh-header"><span class="signal-cat">LIVE</span> Данные из панели Remnawave</div>';
+    html += '<div class="sub-kpi-grid">';
+    html += subKpiHtml('Записей', String(records.length), 'всего в панели');
+    html += subKpiHtml('Платформы', Array.from(platforms).map(platformName).join(', ') || '—', platforms.size + ' шт', platforms.size >= 3 ? 'warn' : '');
+    html += subKpiHtml('Сборки', String(buildIds.size), 'уникальных build_id', buildIds.size > 6 ? 'warn' : '');
+    html += subKpiHtml('IP-адреса', String(ips.size), 'уникальных IP', ips.size > 5 ? 'warn' : '');
+    html += '</div>';
+
+    // Show last 10 records as timeline
+    html += '<div class="live-srh-timeline">';
+    const shown = records.slice(0, 15);
+    for (const r of shown) {
+      const ts = r.requestedAt || r.ts || r.createdAt || '';
+      const tsLabel = ts ? new Date(ts).toLocaleString('ru-RU') : '—';
+      html += '<div class="live-srh-row">'
+        + '<span class="live-srh-ts">' + tsLabel + '</span>'
+        + '<span class="mini-pill">' + esc(platformName(r.platform || '')) + '</span>'
+        + (r.ip ? '<code>' + esc(r.ip) + '</code>' : '')
+        + (r.buildId ? '<span class="mini-pill">' + esc(r.buildId.substring(0, 12)) + '</span>' : '')
+        + '</div>';
+    }
+    if (records.length > 15) html += '<div class="live-srh-more">ещё ' + (records.length - 15) + ' записей…</div>';
+    html += '</div></div>';
+    container.innerHTML = html;
+    toast('SRH загружена: ' + records.length + ' записей', 'ok');
+  } catch (e) {
+    container.innerHTML = '<div class="empty-state sm"><p>Ошибка: ' + esc(e.message) + '</p></div>';
+  }
+}
+
+// ─── Live HWID Devices from Remnawave Panel ──────────────────────
+async function fetchLiveHwidDevices(uuid) {
+  const container = document.getElementById('live-hwid-results');
+  if (!container) return;
+  container.innerHTML = '<div class="loading-state" style="padding:12px"><div class="spinner-large"></div><p>Загрузка устройств из панели…</p></div>';
+  try {
+    const resp = await fetch('/api/user-hwid-devices?uuid=' + encodeURIComponent(uuid));
+    if (resp.status === 401) { await handleAuthExpired(); return; }
+    const data = await resp.json();
+    if (data.error) { container.innerHTML = '<div class="empty-state sm"><p>Ошибка: ' + esc(data.error) + '</p></div>'; return; }
+    const devices = data.devices || [];
+    if (devices.length === 0) {
+      container.innerHTML = '<div class="empty-state sm"><p>Нет HWID устройств в панели</p></div>';
+      return;
+    }
+    let html = '<div class="live-hwid-panel">';
+    html += '<div class="live-srh-header"><span class="signal-cat">LIVE</span> ' + devices.length + ' устройств из панели</div>';
+    html += '<div class="live-hwid-grid">';
+    for (const d of devices) {
+      const createdAt = d.createdAt ? new Date(d.createdAt).toLocaleString('ru-RU') : '—';
+      const lastUsed = d.lastConnectedAt || d.updatedAt;
+      const lastUsedStr = lastUsed ? new Date(lastUsed).toLocaleString('ru-RU') : '—';
+      html += '<div class="live-hwid-card">'
+        + '<div class="live-hwid-card-head">'
+        + '<span class="live-hwid-name">' + esc(d.deviceName || d.hwid || 'Устройство') + '</span>'
+        + (d.platform ? '<span class="mini-pill">' + esc(d.platform) + '</span>' : '')
+        + '</div>'
+        + '<div class="live-hwid-details">'
+        + '<div><span>HWID:</span> <code>' + esc(d.hwid || '—') + '</code></div>'
+        + '<div><span>Создан:</span> ' + createdAt + '</div>'
+        + '<div><span>Последнее:</span> ' + lastUsedStr + '</div>'
+        + (d.osVersion ? '<div><span>ОС:</span> ' + esc(d.osVersion) + '</div>' : '')
+        + (d.appVersion ? '<div><span>Версия:</span> ' + esc(d.appVersion) + '</div>' : '')
+        + '</div></div>';
+    }
+    html += '</div></div>';
+    container.innerHTML = html;
+    toast('Устройства: ' + devices.length + ' из панели', 'ok');
+  } catch (e) {
+    container.innerHTML = '<div class="empty-state sm"><p>Ошибка: ' + esc(e.message) + '</p></div>';
+  }
+}
+
+// ─── Disable / Enable user in Remnawave Panel ───────────────────
+function disableUserInPanel(uuid, action) {
+  const isDisable = action === 'disable';
+  showConfirmDialog({
+    title: isDisable ? 'Отключить пользователя?' : 'Включить пользователя?',
+    message: isDisable
+      ? 'Подписка будет ОТКЛЮЧЕНА через Remnawave API. Пользователь потеряет доступ к VPN.'
+      : 'Подписка будет ВКЛЮЧЕНА через Remnawave API. Пользователь восстановит доступ к VPN.',
+    warning: isDisable ? 'Это действие отключит VPN для пользователя немедленно!' : '',
+    confirmText: isDisable ? 'Да, отключить' : 'Да, включить',
+    cancelText: 'Отмена',
+    onConfirm: async () => {
+      try {
+        const resp = await fetch('/api/user-disable', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid, action, reason: isDisable ? 'Disabled via monitor' : 'Enabled via monitor' })
+        });
+        if (resp.status === 401) { await handleAuthExpired(); return; }
+        const data = await resp.json();
+        if (data.ok) {
+          toast(isDisable ? 'Пользователь отключён' : 'Пользователь включён', 'ok');
+          // Refresh the card
+          closeUserModal();
+        } else {
+          toast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
+        }
+      } catch (e) {
+        toast('Ошибка: ' + e.message, 'error');
+      }
+    }
+  });
+}
+
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeUserModal();
 });
@@ -3660,6 +3794,13 @@ function userCardHtml(u) {
           <div id="user-sub-history-tab" class="sub-history-panel">
             <div class="loading-state" style="padding:24px"><div class="spinner-large"></div><p>Загрузка подписок…</p></div>
           </div>
+          <div style="padding:0 18px 18px">
+            <button class="btn-mini btn-accent" onclick="fetchLiveSrh('${escAttr(uuid)}')" style="margin-bottom:8px">
+              ${IC._s('<path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', 14)}
+              Загрузить SRH из панели
+            </button>
+            <div id="live-srh-results"></div>
+          </div>
         </div>
 
         <!-- TAB: Устройства -->
@@ -3693,6 +3834,18 @@ function userCardHtml(u) {
                 ${devices.length > 0 ? `<div class="dev-rows">${devices.map(deviceDetailHtml).join('')}</div>` : '<div class="loading-state" style="padding:16px"><div class="spinner-large"></div><p>Загрузка устройств…</p></div>'}
               </div>
             </div>
+
+            <!-- Live HWID from Panel -->
+            <div class="uc-section" style="margin:0">
+              <div class="uc-section-head">
+                <span>Устройства из панели (Live)</span>
+                <button class="btn-mini btn-accent" onclick="fetchLiveHwidDevices('${escAttr(uuid)}')">
+                  ${IC._s('<path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', 14)}
+                  Обновить
+                </button>
+              </div>
+              <div id="live-hwid-results"></div>
+            </div>
           </div>
         </div>
 
@@ -3719,6 +3872,11 @@ function userCardHtml(u) {
                 <div class="uc-action-icon">${IC.churn}</div>
                 <div class="uc-action-label">Сменить UUID</div>
                 <div class="uc-action-desc">Генерация нового UUID подписки</div>
+              </button>
+              <button class="uc-action-card uc-action-danger" onclick="disableUserInPanel('${escAttr(uuid)}', 'disable')">
+                <div class="uc-action-icon">${IC._s('<circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>', 20)}</div>
+                <div class="uc-action-label">Отключить в панели</div>
+                <div class="uc-action-desc">Отключить подписку через Remnawave API</div>
               </button>
             </div>
 
