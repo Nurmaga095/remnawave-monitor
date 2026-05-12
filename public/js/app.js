@@ -1403,90 +1403,72 @@ function renderNetworkTopologyMap() {
     return;
   }
 
-  const width = 980;
-  const height = Math.max(320, Math.min(620, 150 + topology.asns.length * 34 + topology.users.length * 5));
-  const nodeX = 120;
-  const asnX = Math.round(width * 0.48);
-  const userX = width - 120;
-  const nodePositions = distributeY(topology.nodes, height, 72);
-  const asnPositions = distributeY(topology.asns, height, 54);
-  const userPositions = distributeUsersByAsn(topology.users, asnPositions, height);
+  const nodeInfoMap = new Map();
+  for (const node of topology.nodes) nodeInfoMap.set(node.key, node);
 
-  const paths = [];
-  for (const asn of topology.asns) {
-    for (const nodeKey of asn.nodeKeys) {
-      const n = nodePositions.get(nodeKey);
-      const a = asnPositions.get(asn.key);
-      if (!n || !a) continue;
-      paths.push(`<path class="topo-edge topo-edge-node" d="M${nodeX + 46},${n.y} C${nodeX + 170},${n.y} ${asnX - 170},${a.y} ${asnX - 48},${a.y}" />`);
-    }
-  }
+  const usersByAsn = new Map();
   for (const user of topology.users) {
-    const a = asnPositions.get(user.asnKey);
-    const u = userPositions.get(user.key);
-    if (!a || !u) continue;
-    paths.push(`<path class="topo-edge ${user.isSuspect ? 'topo-edge-risk' : ''}" d="M${asnX + 48},${a.y} C${asnX + 170},${a.y} ${userX - 170},${u.y} ${userX - 32},${u.y}" />`);
+    if (!usersByAsn.has(user.asnKey)) usersByAsn.set(user.asnKey, []);
+    usersByAsn.get(user.asnKey).push(user);
   }
-
-  const nodeHtml = topology.nodes.map(node => {
-    const p = nodePositions.get(node.key);
-    return `<g class="topo-node topo-node-root" transform="translate(${nodeX},${p.y})">
-      <circle r="28"></circle>
-      <text y="-4">${escSvg(shortTopologyLabel(node.name, 16))}</text>
-      <text y="12">${node.userCount} users</text>
-      <title>${esc(node.name)} · ${node.ipCount} IP</title>
-    </g>`;
-  }).join('');
-
-  const asnHtml = topology.asns.map(asn => {
-    const p = asnPositions.get(asn.key);
-    const hot = asn.userCount >= topology.hotUserThreshold;
-    return `<g class="topo-node topo-node-asn ${hot ? 'topo-hot' : ''}" transform="translate(${asnX},${p.y})">
-      <circle r="${hot ? 30 : 24}"></circle>
-      <text y="-4">${escSvg(asn.asnLabel)}</text>
-      <text y="12">${asn.userCount} users · ${asn.ipCount} IP</text>
-      <title>${esc(asn.title)}${hot ? ' · аномальная концентрация' : ''}</title>
-    </g>`;
-  }).join('');
-
-  const userHtml = topology.users.map(user => {
-    const p = userPositions.get(user.key);
-    return `<g class="topo-node topo-node-user ${user.isSuspect ? 'topo-user-risk' : ''}" transform="translate(${userX},${p.y})" onclick="openUserCard('${escAttr(user.key)}')">
-      <circle r="${user.isSuspect ? 12 : 9}"></circle>
-      <text x="18" y="4">${escSvg(shortTopologyLabel(user.name, 18))}</text>
-      <title>${esc(user.name)} · ${esc(user.asnTitle)}</title>
-    </g>`;
-  }).join('');
 
   const hotAsns = topology.asns
     .filter(asn => asn.userCount >= topology.hotUserThreshold)
     .slice(0, 4)
-    .map(asn => `<span><b>${esc(asn.asnLabel)}</b>${esc(asn.userCount)} users</span>`)
+    .map(asn => `<span class="topo-hot-tag"><b>${esc(asn.asnLabel)}</b> ${asn.userCount} users</span>`)
     .join('');
 
-  el.innerHTML = `<div class="topology-summary">
+  let html = `<div class="topology-summary">
     <span><b>${topology.nodes.length}</b> нод</span>
     <span><b>${topology.asns.length}</b> ASN</span>
     <span><b>${topology.users.length}</b> пользователей</span>
     ${hotAsns ? `<div class="topology-hot-list">${hotAsns}</div>` : ''}
-  </div>
-  <svg class="topology-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Топология сети">
-    <defs>
-      <filter id="topoGlow" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation="3" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-      </filter>
-    </defs>
-    <g class="topo-grid">
-      <text x="${nodeX}" y="26">Ноды</text>
-      <text x="${asnX}" y="26">Провайдеры / ASN</text>
-      <text x="${userX}" y="26">Пользователи</text>
-    </g>
-    <g>${paths.join('')}</g>
-    <g>${nodeHtml}</g>
-    <g>${asnHtml}</g>
-    <g>${userHtml}</g>
-  </svg>`;
+  </div>`;
+
+  html += '<div class="topo-groups">';
+  for (const asn of topology.asns) {
+    const hot = asn.userCount >= topology.hotUserThreshold;
+    const asnUsers = usersByAsn.get(asn.key) || [];
+    const suspectCount = asnUsers.filter(u => u.isSuspect).length;
+    const nodeNames = asn.nodeKeys
+      .map(k => { const n = nodeInfoMap.get(k); return n ? n.name : k; })
+      .map(n => shortTopologyLabel(n, 20));
+
+    html += `<div class="topo-group ${hot ? 'topo-group-hot' : ''}">
+      <div class="topo-group-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <div class="topo-group-left">
+          <span class="topo-asn-badge ${hot ? 'topo-asn-hot' : ''}">${esc(asn.asnLabel)}</span>
+          <span class="topo-asn-org">${esc(asn.org || '')}</span>
+        </div>
+        <div class="topo-group-stats">
+          <span class="topo-stat">${IC._s('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>', 13)} ${asn.userCount}</span>
+          <span class="topo-stat">${IC._s('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>', 13)} ${asn.ipCount} IP</span>
+          ${suspectCount > 0 ? `<span class="topo-stat topo-stat-risk">\u26A0 ${suspectCount}</span>` : ''}
+          <span class="topo-chevron">${IC._s('<polyline points="6 9 12 15 18 9"/>', 14)}</span>
+        </div>
+      </div>
+      <div class="topo-group-body">
+        <div class="topo-group-cols">
+          <div class="topo-col-nodes">
+            <div class="topo-col-title">Ноды</div>
+            ${nodeNames.map(n => `<div class="topo-node-pill">${IC._s('<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>', 13)} ${esc(n)}</div>`).join('')}
+          </div>
+          <div class="topo-col-users">
+            <div class="topo-col-title">Пользователи (${asnUsers.length})</div>
+            <div class="topo-user-list">
+              ${asnUsers.map(u => `<button class="topo-user-btn ${u.isSuspect ? 'topo-user-suspect' : ''}" onclick="openUserCard('${escAttr(u.key)}')">
+                <span class="topo-user-dot ${u.isSuspect ? 'dot-risk' : 'dot-ok'}"></span>
+                <span class="topo-user-name">${esc(shortTopologyLabel(u.name, 22))}</span>
+                <span class="topo-user-ips">${u.ips.size} IP</span>
+              </button>`).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 function buildNetworkTopologyData() {
