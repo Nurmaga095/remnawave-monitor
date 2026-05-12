@@ -191,27 +191,47 @@ function createDetector(options = {}) {
     return { signals, context };
   }
 
+  // ─── Mobile Carrier ASN Filter ─────────────────────────────
+  // Mobile carriers route traffic through centralized exit-nodes,
+  // making geo-IP unreliable (e.g. Megafon shows Krasnodar for Chechnya).
+  const MOBILE_CARRIER_PATTERNS = [
+    'megafon', 'мегафон', 'beeline', 'билайн', 'vimpelcom', 'вымпелком',
+    'mts ', ' мтс', 'mobile telesystems', 'мобильные телесистемы',
+    'tele2', 'теле2', 't2 mobile', 'yota', 'йота', 'rostelecom mobile',
+    'mobile subscribers', 'cellular',
+  ];
+  function isMobileCarrierGeo(geo) {
+    if (!geo) return false;
+    if (geo.connectionType && geo.connectionType.toLowerCase().includes('cell')) return true;
+    const org = String(geo.org || geo.organization || geo.isp || '').toLowerCase();
+    const asName = String(geo.asnName || geo.asName || '').toLowerCase();
+    const combined = org + ' ' + asName;
+    return MOBILE_CARRIER_PATTERNS.some(p => combined.includes(p));
+  }
+
   // ─── #4 Multi-City Detection ────────────────────────────────
+  // DEMOTED to 'weak' — geo-IP is unreliable for mobile users
   function detectMultiCity(u, state, keys, entitlement) {
     const cities = new Map(); // city -> {lat,lon}
     for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
       const geo = getGeoForEntry(entry, state);
       const point = getGeoPoint(geo);
       if (!geo || !geo.city || !point) continue;
-      // Skip cellular — mobile towers often show different cities
+      // Skip cellular and mobile carriers — their geo is unreliable
       if (geo.connectionType && geo.connectionType.toLowerCase().includes('cellular')) continue;
+      if (isMobileCarrierGeo(geo)) continue;
       cities.set(geo.city, point);
     }
     if (isCoveredByPaidDeviceLimit(entitlement, cities.size)) return null;
     if (cities.size >= 3) {
-      return { id: 'multi_city_extreme', category: 'strong', active: true, points: 25,
+      return { id: 'multi_city_extreme', category: 'weak', active: true, points: 15,
         reason: `одновременно из ${cities.size} городов при лимите ${entitlement.hwidLimit}: ${[...cities.keys()].join(', ')}` };
     }
     if (cities.size === 2) {
       const [c1, c2] = [...cities.values()];
       const dist = haversine(c1.lat, c1.lon, c2.lat, c2.lon);
-      if (dist > 100) {
-        return { id: 'multi_city_suspect', category: 'strong', active: true, points: 15,
+      if (dist > 200) {
+        return { id: 'multi_city_suspect', category: 'weak', active: true, points: 10,
           reason: `2 города одновременно (${Math.round(dist)} км) при лимите ${entitlement.hwidLimit}: ${[...cities.keys()].join(', ')}` };
       }
     }
@@ -219,6 +239,7 @@ function createDetector(options = {}) {
   }
 
   // ─── #1 Impossible Travel Detection ─────────────────────────
+  // DEMOTED to 'weak' — mobile carrier geo-IP is unreliable
   function detectImpossibleTravel(u, state, keys, entitlement) {
     const history = getDetectionHistory(state);
     if (history.length < 2) return null;
@@ -229,10 +250,11 @@ function createDetector(options = {}) {
       for (const key of keys) {
         const ips = snap.ips && snap.ips[key];
         if (!ips || ips.length === 0) continue;
-        // Get geo from first IP that has geo data
+        // Get geo from first IP that has geo data, skip mobile carriers
         let geo = null;
         for (const entry of normalizeIpEntries(ips)) {
           const g = getGeoForEntry(entry, state);
+          if (isMobileCarrierGeo(g)) continue;
           const point = getGeoPoint(g);
           if (point) { geo = { ...g, ...point, ip: getEntryIp(entry) }; break; }
         }
@@ -256,13 +278,12 @@ function createDetector(options = {}) {
     const historyDiversity = getHistoryGeoDiversity(state, keys);
     if (isCoveredByPaidDeviceLimit(entitlement, historyDiversity.locationCount)) return null;
     if (maxSpeed > 900) {
-      const crossCountry = maxDetail.length > 0;
-      return { id: 'impossible_travel', category: 'strong', active: true,
-        points: crossCountry ? 25 : 15,
+      return { id: 'impossible_travel', category: 'weak', active: true,
+        points: 10,
         reason: `невозможное перемещение ${Math.round(maxSpeed)} км/ч: ${maxDetail}` };
     }
     if (maxSpeed > 500) {
-      return { id: 'suspicious_travel', category: 'weak', active: true, points: 10,
+      return { id: 'suspicious_travel', category: 'weak', active: true, points: 5,
         reason: `подозрительное перемещение ${Math.round(maxSpeed)} км/ч: ${maxDetail}` };
     }
     return null;
@@ -472,15 +493,15 @@ function createDetector(options = {}) {
     // Persistent overlap across multiple countries = strong evidence.
     if (overlapCount >= 3 && maxConcurrentCountries >= 2 && maxConcurrentAsns > hwidLimit) {
       return {
-        id: 'simultaneous_distinct_networks', category: 'strong', active: true,
-        points: 25,
+        id: 'simultaneous_distinct_networks', category: 'weak', active: true,
+        points: 15,
         reason: `${overlapCount} снимков с ${overlapDetail} одновременно (${overlapCount * 5} мин пересечения)`,
       };
     }
     if (overlapCount >= 2 && maxConcurrentCountries >= 2 && maxConcurrentAsns > hwidLimit) {
       return {
-        id: 'simultaneous_distinct_networks', category: 'strong', active: true,
-        points: 20,
+        id: 'simultaneous_distinct_networks', category: 'weak', active: true,
+        points: 10,
         reason: `${overlapCount} снимков с ${maxConcurrentAsns} ASN из ${maxConcurrentCountries} стран (лимит ${hwidLimit})`,
       };
     }
@@ -539,15 +560,15 @@ function createDetector(options = {}) {
 
       if (multiAsnSnapshots >= 2) {
         return {
-          id: 'extracted_key_suspected', category: 'strong', active: true,
-          points: 25,
+          id: 'extracted_key_suspected', category: 'weak', active: true,
+          points: 15,
           reason: `HWID ${hwidCount}/${hwidLimit} (норма), но ${asns.size} ASN из ${countries.size} стран > лимит ${hwidLimit} — вероятно ключ извлечён`,
         };
       }
 
       return {
-        id: 'extracted_key_suspected', category: 'strong', active: true,
-        points: 15,
+        id: 'extracted_key_suspected', category: 'weak', active: true,
+        points: 10,
         reason: `HWID в норме, но ${asns.size} ASN и ${countries.size} стран > лимит ${hwidLimit}`,
       };
     }
@@ -1202,7 +1223,7 @@ function createDetector(options = {}) {
       };
     }
 
-    if (confidence >= 45 || stability.verdict === 'watch') {
+    if (confidence >= 60 || stability.verdict === 'watch') {
       return {
         id: 'app_stability_breakdown',
         category: 'weak',
