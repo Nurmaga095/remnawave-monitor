@@ -1,7 +1,7 @@
 // ─── Server-side Detection Module v6 — Premium Multi-Signal ────
-// 13 сигналов, 4 категории, 4 уровня:
+// 14 сигналов, 4 категории, 4 уровня:
 //
-// DETERMINISTIC: hwid_over_limit
+// DETERMINISTIC: hwid_over_limit, app_stability_breakdown
 // STRONG: hwid_churn, temporal_247, multi_city, impossible_travel, velocity_extreme,
 //         fingerprint_cluster, simultaneous_distinct_networks, extracted_key_suspected,
 //         multi_node_simultaneous
@@ -174,6 +174,10 @@ function createDetector(options = {}) {
     // ═══ STRONG: Multi-Platform Subscription (#11) ═══
     const subPlatformSignal = detectMultiPlatformSub(u, state, keys, hwidLimit, hwid);
     if (subPlatformSignal) signals.push(subPlatformSignal);
+
+    // ═══ DETERMINISTIC: App Stability Breakdown (#13) ═══
+    const appStabilitySignal = detectAppStabilityBreakdown(u, state, keys);
+    if (appStabilitySignal) signals.push(appStabilitySignal);
 
     // ═══ STRONG: Subscription Storm (#12) ═══
     const subStormSignal = detectSubStorm(u, state, keys);
@@ -828,7 +832,7 @@ function createDetector(options = {}) {
       return 'identity';
     if (['isp_datacenter_heavy', 'isp_mix'].includes(id))
       return 'infrastructure';
-    if (['multi_platform_sub', 'multi_device_sub', 'sub_storm'].includes(id))
+    if (['multi_platform_sub', 'multi_device_sub', 'sub_storm', 'app_stability_breakdown'].includes(id))
       return 'subscription';
     return null;
   }
@@ -880,6 +884,14 @@ function createDetector(options = {}) {
         level: 'confirmed',
         label: 'confirmed_violation',
         reason: 'Есть прямое устройство-доказательство: превышение оплаченного лимита HWID.',
+      };
+    }
+
+    if (ids.has('app_stability_breakdown')) {
+      return {
+        level: 'confirmed',
+        label: 'confirmed_collective_account',
+        reason: 'Клиентский build_id меняется быстрее недельного цикла и одновременно прыгает между платформами.',
       };
     }
 
@@ -1131,6 +1143,55 @@ function createDetector(options = {}) {
       return {
         id: 'multi_device_sub', category: 'weak', active: true, points: 10,
         reason: `${uaVariantCount} UA-сборок обновляют подписку > лимит ${hwidLimit}`,
+      };
+    }
+
+    return null;
+  }
+
+  function detectAppStabilityBreakdown(u, state, keys) {
+    const subHistory = state.subHistory;
+    if (!subHistory) return null;
+
+    let hist = null;
+    for (const key of keys) {
+      if (subHistory[key]) { hist = subHistory[key]; break; }
+    }
+    if (!hist || !hist.appStability) return null;
+
+    const stability = hist.appStability;
+    const confidence = Number(stability.sharingConfidence || 0);
+    const metrics = stability.metrics || {};
+    const platforms = Array.isArray(metrics.platforms) ? metrics.platforms : (hist.platforms || []);
+    const reasonSuffix = stability.reason ? `: ${stability.reason}` : '';
+
+    if (confidence >= 100 || stability.verdict === 'confirmed') {
+      return {
+        id: 'app_stability_breakdown',
+        category: 'deterministic',
+        active: true,
+        points: 45,
+        reason: `индекс стабильности приложения ${stability.stabilityIndex}/100, уверенность шеринга 100%${reasonSuffix}`,
+      };
+    }
+
+    if (confidence >= 75 || stability.verdict === 'probable') {
+      return {
+        id: 'app_stability_breakdown',
+        category: 'strong',
+        active: true,
+        points: 25,
+        reason: `нестабильный клиент: ${metrics.uniqueBuildCount || 0} build_id, ${platforms.length || metrics.uniquePlatformCount || 0} платформ, ${metrics.buildSwitchesPerWeek || 0}/нед`,
+      };
+    }
+
+    if (confidence >= 45 || stability.verdict === 'watch') {
+      return {
+        id: 'app_stability_breakdown',
+        category: 'weak',
+        active: true,
+        points: 10,
+        reason: `клиент меняется чаще обычного: ${metrics.uniqueBuildCount || 0} build_id, ${platforms.length || metrics.uniquePlatformCount || 0} платформ`,
       };
     }
 

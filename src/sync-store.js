@@ -1594,7 +1594,7 @@ function createStore(options = {}) {
 
     // IP connection events from snapshots
     const ipEvents = db.prepare(`
-      SELECT s.ts, i.ip
+      SELECT s.ts, i.ip, i.country_code, i.asn, i.city, i.node_uuid
       FROM ip_snapshot_ips i
       JOIN ip_snapshots s ON s.id = i.snapshot_id
       WHERE i.user_key = ? AND s.ts >= ?
@@ -1609,6 +1609,15 @@ function createStore(options = {}) {
       for (const ip of uniqueIps) {
         const row = select.get(ip);
         if (row) geoMap[ip] = parseJson(row.raw_json);
+      }
+    }
+    for (const event of ipEvents) {
+      if (!geoMap[event.ip] && (event.country_code || event.asn || event.city)) {
+        geoMap[event.ip] = {
+          countryCode: event.country_code || '',
+          asn: event.asn || '',
+          city: event.city || '',
+        };
       }
     }
 
@@ -1742,6 +1751,51 @@ function createStore(options = {}) {
       });
     }
 
+    const subRows = db.prepare(`
+      SELECT request_at as ts, request_ip as ip, user_agent as ua,
+             platform, app_version as version, build_id as buildId
+      FROM sub_request_history
+      WHERE user_key = ? AND request_at >= ?
+      ORDER BY request_at ASC
+      LIMIT 300
+    `).all(userKey, cutoff);
+    const appStability = analyzeAppStability(subRows);
+    if (appStability.verdict === 'confirmed' || appStability.verdict === 'probable') {
+      events.push({
+        ts: subRows.length ? subRows[subRows.length - 1].ts : Date.now(),
+        type: 'app_stability',
+        title: appStability.verdict === 'confirmed' ? 'Клиентский профиль рассыпался' : 'Нестабильный клиентский профиль',
+        detail: appStability.reason,
+        meta: appStability,
+      });
+    }
+    let previousSubBuild = null;
+    let previousSubPlatform = null;
+    for (const row of subRows) {
+      const build = normalizeClientBuild(row.buildId);
+      const platform = normalizeClientPlatform(row.platform);
+      if (build && previousSubBuild && build !== previousSubBuild) {
+        events.push({
+          ts: row.ts,
+          type: 'build_changed',
+          title: 'Сменился build_id клиента',
+          detail: `${previousSubBuild} -> ${build}`,
+          meta: { from: previousSubBuild, to: build, platform },
+        });
+      }
+      if (platform && platform !== 'happ' && previousSubPlatform && platform !== previousSubPlatform) {
+        events.push({
+          ts: row.ts,
+          type: 'platform_changed',
+          title: 'Сменилась платформа клиента',
+          detail: `${previousSubPlatform} -> ${platform}`,
+          meta: { from: previousSubPlatform, to: platform, buildId: build },
+        });
+      }
+      if (build) previousSubBuild = build;
+      if (platform && platform !== 'happ') previousSubPlatform = platform;
+    }
+
     const notificationEvents = db.prepare(`
       SELECT telegram_id, message, status, sent_at
       FROM user_notifications
@@ -1785,6 +1839,8 @@ function createStore(options = {}) {
       totalSnapshots: ipEvents.length,
       uniqueIps: uniqueIps.length,
       hwidHistory: hwidEvents,
+      subRequests: subRows,
+      appStability,
       linkedAccounts,
       auditLog,
       events: dedupeInvestigationEvents(events).slice(0, 120),
@@ -1991,6 +2047,134 @@ function createStore(options = {}) {
     return saveSubHistoryTx(records);
   }
 
+  function analyzeAppStability(records) {
+    const rows = (records || [])
+      .map((row) => ({
+        ts: Number(row.ts || row.request_at || row.requestAt || 0),
+        platform: normalizeClientPlatform(row.platform),
+        buildId: normalizeClientBuild(row.buildId || row.build_id || row.build),
+        ip: row.ip || row.request_ip || null,
+        ua: row.ua || row.user_agent || null,
+      }))
+      .filter((row) => Number.isFinite(row.ts) && row.ts > 0)
+      .sort((a, b) => a.ts - b.ts);
+
+    if (rows.length === 0) {
+      return {
+        stabilityIndex: 100,
+        sharingConfidence: 0,
+        verdict: 'clean',
+        reason: 'Нет истории клиентских сборок',
+        metrics: {
+          requestCount: 0,
+          uniqueBuildCount: 0,
+          uniquePlatformCount: 0,
+          buildSwitchCount: 0,
+          platformSwitchCount: 0,
+          buildSwitchesPerWeek: 0,
+          spanDays: 0,
+        },
+      };
+    }
+
+    const now = Date.now();
+    const recent = rows.filter((row) => row.ts >= now - 7 * 24 * 60 * 60 * 1000);
+    const sample = recent.length >= 2 ? recent : rows.slice(-50);
+    const firstTs = sample[0].ts;
+    const lastTs = sample[sample.length - 1].ts;
+    const spanDays = Math.max(1 / 24, (lastTs - firstTs) / (24 * 60 * 60 * 1000));
+    const builds = new Set(sample.map((row) => row.buildId).filter(Boolean));
+    const platforms = new Set(sample.map((row) => row.platform).filter((platform) => platform && platform !== 'happ'));
+    const ips = new Set(sample.map((row) => row.ip).filter(Boolean));
+
+    let buildSwitchCount = 0;
+    let platformSwitchCount = 0;
+    let previousBuild = null;
+    let previousPlatform = null;
+    for (const row of sample) {
+      if (row.buildId) {
+        if (previousBuild && previousBuild !== row.buildId) buildSwitchCount += 1;
+        previousBuild = row.buildId;
+      }
+      if (row.platform && row.platform !== 'happ') {
+        if (previousPlatform && previousPlatform !== row.platform) platformSwitchCount += 1;
+        previousPlatform = row.platform;
+      }
+    }
+
+    const buildSwitchesPerWeek = buildSwitchCount / Math.max(spanDays / 7, 1 / 7);
+    const rapidBuildChurn = buildSwitchCount >= 2 && buildSwitchesPerWeek > 1;
+    const threePlatformsFast = platforms.size >= 3 && builds.size >= 3 && spanDays <= 2.25;
+    const deterministicSharing = rapidBuildChurn && platformSwitchCount >= 2 && platforms.size >= 3 && builds.size >= 3;
+
+    let sharingConfidence = 0;
+    if (deterministicSharing || threePlatformsFast) {
+      sharingConfidence = 100;
+    } else {
+      sharingConfidence += Math.min(35, Math.round(buildSwitchesPerWeek * 6));
+      sharingConfidence += Math.min(25, Math.max(0, builds.size - 1) * 8);
+      sharingConfidence += Math.min(30, Math.max(0, platforms.size - 1) * 12);
+      sharingConfidence += Math.min(10, Math.max(0, ips.size - 1) * 2);
+      if (rapidBuildChurn && platformSwitchCount >= 1) sharingConfidence += 15;
+      sharingConfidence = Math.min(95, sharingConfidence);
+    }
+
+    const stabilityIndex = Math.max(0, 100 - sharingConfidence);
+    const verdict = sharingConfidence >= 100 ? 'confirmed'
+      : sharingConfidence >= 75 ? 'probable'
+      : sharingConfidence >= 45 ? 'watch'
+      : 'clean';
+
+    const platformList = Array.from(platforms);
+    const reason = verdict === 'confirmed'
+      ? `build_id менялся ${buildSwitchCount} раз за ${formatDaysShort(spanDays)}, платформы: ${platformList.join(', ')}`
+      : verdict === 'probable'
+      ? `частая смена build_id (${buildSwitchesPerWeek.toFixed(1)}/нед) и ${platforms.size} платформ`
+      : verdict === 'watch'
+      ? `нестабильные клиентские признаки: ${builds.size} build_id, ${platforms.size} платформ`
+      : 'Клиентские build/platform выглядят стабильно';
+
+    return {
+      stabilityIndex,
+      sharingConfidence,
+      verdict,
+      reason,
+      metrics: {
+        requestCount: sample.length,
+        uniqueBuildCount: builds.size,
+        uniquePlatformCount: platforms.size,
+        uniqueIpCount: ips.size,
+        buildSwitchCount,
+        platformSwitchCount,
+        buildSwitchesPerWeek: Number(buildSwitchesPerWeek.toFixed(2)),
+        spanDays: Number(spanDays.toFixed(2)),
+        platforms: platformList,
+        buildIds: Array.from(builds).slice(0, 12),
+      },
+    };
+  }
+
+  function normalizeClientPlatform(platform) {
+    const value = String(platform || '').trim().toLowerCase();
+    if (!value) return '';
+    if (value.includes('ios') || value.includes('iphone') || value.includes('ipad')) return 'ios';
+    if (value.includes('android')) return 'android';
+    if (value.includes('windows') || value === 'win32' || value === 'win64') return 'windows';
+    if (value.includes('mac') || value.includes('darwin') || value === 'osx') return 'macos';
+    if (value.includes('linux')) return 'linux';
+    return value;
+  }
+
+  function normalizeClientBuild(buildId) {
+    const value = String(buildId || '').trim().toLowerCase();
+    return value || '';
+  }
+
+  function formatDaysShort(days) {
+    if (days < 1) return `${Math.max(1, Math.round(days * 24))}ч`;
+    return `${days.toFixed(days >= 10 ? 0 : 1)}д`;
+  }
+
   function getSubHistoryGrouped() {
     // Return per-user analysis of subscription requests (last 7 days)
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -2048,6 +2232,7 @@ function createStore(options = {}) {
         userAgents: Array.from(data.userAgents).slice(0, 10),
         requestCount: data.requestCount,
         records: data.records.slice(0, 100),
+        appStability: analyzeAppStability(data.records),
       };
     }
     return result;

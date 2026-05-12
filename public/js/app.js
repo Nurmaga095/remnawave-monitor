@@ -1391,6 +1391,244 @@ function renderConnectionMap() {
   if (countLegend) countLegend.textContent = `${points.length} точек`;
 }
 
+function renderNetworkTopologyMap() {
+  const el = document.getElementById('network-topology-map');
+  const countEl = document.getElementById('topology-node-count');
+  if (!el) return;
+
+  const topology = buildNetworkTopologyData();
+  if (countEl) countEl.textContent = `${topology.edgeCount} связей`;
+  if (topology.edgeCount === 0) {
+    el.innerHTML = '<div class="empty-state sm"><p>Нет ASN-данных для топологии</p></div>';
+    return;
+  }
+
+  const width = 980;
+  const height = Math.max(320, Math.min(620, 150 + topology.asns.length * 34 + topology.users.length * 5));
+  const nodeX = 120;
+  const asnX = Math.round(width * 0.48);
+  const userX = width - 120;
+  const nodePositions = distributeY(topology.nodes, height, 72);
+  const asnPositions = distributeY(topology.asns, height, 54);
+  const userPositions = distributeUsersByAsn(topology.users, asnPositions, height);
+
+  const paths = [];
+  for (const asn of topology.asns) {
+    for (const nodeKey of asn.nodeKeys) {
+      const n = nodePositions.get(nodeKey);
+      const a = asnPositions.get(asn.key);
+      if (!n || !a) continue;
+      paths.push(`<path class="topo-edge topo-edge-node" d="M${nodeX + 46},${n.y} C${nodeX + 170},${n.y} ${asnX - 170},${a.y} ${asnX - 48},${a.y}" />`);
+    }
+  }
+  for (const user of topology.users) {
+    const a = asnPositions.get(user.asnKey);
+    const u = userPositions.get(user.key);
+    if (!a || !u) continue;
+    paths.push(`<path class="topo-edge ${user.isSuspect ? 'topo-edge-risk' : ''}" d="M${asnX + 48},${a.y} C${asnX + 170},${a.y} ${userX - 170},${u.y} ${userX - 32},${u.y}" />`);
+  }
+
+  const nodeHtml = topology.nodes.map(node => {
+    const p = nodePositions.get(node.key);
+    return `<g class="topo-node topo-node-root" transform="translate(${nodeX},${p.y})">
+      <circle r="28"></circle>
+      <text y="-4">${escSvg(shortTopologyLabel(node.name, 16))}</text>
+      <text y="12">${node.userCount} users</text>
+      <title>${esc(node.name)} · ${node.ipCount} IP</title>
+    </g>`;
+  }).join('');
+
+  const asnHtml = topology.asns.map(asn => {
+    const p = asnPositions.get(asn.key);
+    const hot = asn.userCount >= topology.hotUserThreshold;
+    return `<g class="topo-node topo-node-asn ${hot ? 'topo-hot' : ''}" transform="translate(${asnX},${p.y})">
+      <circle r="${hot ? 30 : 24}"></circle>
+      <text y="-4">${escSvg(asn.asnLabel)}</text>
+      <text y="12">${asn.userCount} users · ${asn.ipCount} IP</text>
+      <title>${esc(asn.title)}${hot ? ' · аномальная концентрация' : ''}</title>
+    </g>`;
+  }).join('');
+
+  const userHtml = topology.users.map(user => {
+    const p = userPositions.get(user.key);
+    return `<g class="topo-node topo-node-user ${user.isSuspect ? 'topo-user-risk' : ''}" transform="translate(${userX},${p.y})" onclick="openUserCard('${escAttr(user.key)}')">
+      <circle r="${user.isSuspect ? 12 : 9}"></circle>
+      <text x="18" y="4">${escSvg(shortTopologyLabel(user.name, 18))}</text>
+      <title>${esc(user.name)} · ${esc(user.asnTitle)}</title>
+    </g>`;
+  }).join('');
+
+  const hotAsns = topology.asns
+    .filter(asn => asn.userCount >= topology.hotUserThreshold)
+    .slice(0, 4)
+    .map(asn => `<span><b>${esc(asn.asnLabel)}</b>${esc(asn.userCount)} users</span>`)
+    .join('');
+
+  el.innerHTML = `<div class="topology-summary">
+    <span><b>${topology.nodes.length}</b> нод</span>
+    <span><b>${topology.asns.length}</b> ASN</span>
+    <span><b>${topology.users.length}</b> пользователей</span>
+    ${hotAsns ? `<div class="topology-hot-list">${hotAsns}</div>` : ''}
+  </div>
+  <svg class="topology-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Топология сети">
+    <defs>
+      <filter id="topoGlow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="3" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <g class="topo-grid">
+      <text x="${nodeX}" y="26">Ноды</text>
+      <text x="${asnX}" y="26">Провайдеры / ASN</text>
+      <text x="${userX}" y="26">Пользователи</text>
+    </g>
+    <g>${paths.join('')}</g>
+    <g>${nodeHtml}</g>
+    <g>${asnHtml}</g>
+    <g>${userHtml}</g>
+  </svg>`;
+}
+
+function buildNetworkTopologyData() {
+  const source = getActiveIpsSource();
+  const suspects = _cachedSuspects || getSuspects();
+  const suspectKeys = new Set(suspects.flatMap(user => getUserAliases(user)));
+  const nodeMap = (state.data && state.data.nodeMap) || {};
+  const nodesInfo = (state.data && state.data.nodesInfo) || [];
+  const nodeNames = {};
+  for (const node of nodesInfo) {
+    const key = node.uuid || node.id || node.nodeUuid || '';
+    if (key) nodeNames[key] = node.name || node.address || key;
+  }
+  Object.assign(nodeNames, nodeMap);
+
+  const nodes = new Map();
+  const asns = new Map();
+  const users = new Map();
+  const edges = new Set();
+
+  for (const [userKey, entries] of Object.entries(source || {})) {
+    const user = findUserByAnyKey(userKey);
+    const userName = user ? (user.username || user.name || userKey) : userKey;
+    for (const entry of (Array.isArray(entries) ? entries : [])) {
+      const ip = entry && entry.ip;
+      if (!ip) continue;
+      const geo = entry.geo || {};
+      const asnRaw = geo.asn ? String(geo.asn) : '';
+      if (!asnRaw) continue;
+      const asnKey = `AS${asnRaw}`;
+      const nodeKey = entry.nodeUuid || 'unknown-node';
+      const nodeName = nodeNames[nodeKey] || (nodeKey === 'unknown-node' ? 'Нода не определена' : nodeKey);
+
+      if (!nodes.has(nodeKey)) nodes.set(nodeKey, { key: nodeKey, name: nodeName, users: new Set(), ips: new Set() });
+      nodes.get(nodeKey).users.add(userKey);
+      nodes.get(nodeKey).ips.add(ip);
+
+      if (!asns.has(asnKey)) {
+        asns.set(asnKey, {
+          key: asnKey,
+          asnLabel: asnKey,
+          title: `${asnKey}${geo.org || geo.isp ? ` · ${geo.org || geo.isp}` : ''}`,
+          org: geo.org || geo.isp || '',
+          nodeKeys: new Set(),
+          users: new Set(),
+          ips: new Set(),
+        });
+      }
+      const asn = asns.get(asnKey);
+      asn.nodeKeys.add(nodeKey);
+      asn.users.add(userKey);
+      asn.ips.add(ip);
+
+      if (!users.has(userKey)) {
+        users.set(userKey, {
+          key: userKey,
+          name: userName,
+          asnKey,
+          asnTitle: asn.title,
+          isSuspect: suspectKeys.has(userKey),
+          ips: new Set(),
+        });
+      }
+      users.get(userKey).ips.add(ip);
+      edges.add(`${nodeKey}->${asnKey}`);
+      edges.add(`${asnKey}->${userKey}`);
+    }
+  }
+
+  const nodeList = Array.from(nodes.values()).map(item => ({
+    ...item,
+    userCount: item.users.size,
+    ipCount: item.ips.size,
+  })).sort((a, b) => b.userCount - a.userCount).slice(0, 8);
+  const allowedNodeKeys = new Set(nodeList.map(item => item.key));
+
+  const asnList = Array.from(asns.values())
+    .map(item => ({
+      ...item,
+      nodeKeys: Array.from(item.nodeKeys).filter(key => allowedNodeKeys.has(key)),
+      userCount: item.users.size,
+      ipCount: item.ips.size,
+    }))
+    .filter(item => item.nodeKeys.length > 0)
+    .sort((a, b) => b.userCount - a.userCount || b.ipCount - a.ipCount)
+    .slice(0, 14);
+  const allowedAsns = new Set(asnList.map(item => item.key));
+  const userList = Array.from(users.values())
+    .filter(item => allowedAsns.has(item.asnKey))
+    .sort((a, b) => Number(b.isSuspect) - Number(a.isSuspect) || b.ips.size - a.ips.size || a.name.localeCompare(b.name))
+    .slice(0, 60);
+
+  const avgUsers = asnList.length ? asnList.reduce((sum, asn) => sum + asn.userCount, 0) / asnList.length : 0;
+  const hotUserThreshold = Math.max(5, Math.min(18, Math.ceil(avgUsers * 2)));
+
+  return {
+    nodes: nodeList,
+    asns: asnList,
+    users: userList,
+    edgeCount: edges.size,
+    hotUserThreshold,
+  };
+}
+
+function distributeY(items, height, topPad) {
+  const map = new Map();
+  const n = Math.max(1, items.length);
+  const usable = Math.max(1, height - topPad - 38);
+  items.forEach((item, index) => {
+    map.set(item.key, { y: topPad + usable * ((index + 0.5) / n) });
+  });
+  return map;
+}
+
+function distributeUsersByAsn(users, asnPositions, height) {
+  const map = new Map();
+  const byAsn = new Map();
+  for (const user of users) {
+    if (!byAsn.has(user.asnKey)) byAsn.set(user.asnKey, []);
+    byAsn.get(user.asnKey).push(user);
+  }
+  for (const [asnKey, list] of byAsn.entries()) {
+    const anchor = asnPositions.get(asnKey);
+    if (!anchor) continue;
+    const step = 24;
+    const start = anchor.y - step * (list.length - 1) / 2;
+    list.forEach((user, index) => {
+      map.set(user.key, { y: Math.max(54, Math.min(height - 26, start + index * step)) });
+    });
+  }
+  return map;
+}
+
+function shortTopologyLabel(value, maxLen) {
+  const text = String(value || '');
+  return text.length > maxLen ? `${text.slice(0, Math.max(1, maxLen - 1))}…` : text;
+}
+
+function escSvg(value) {
+  return esc(value).replace(/"/g, '&quot;');
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────
 function renderDashboard() {
   const users = state.users;
@@ -1579,6 +1817,7 @@ function renderDashboard() {
 
   // Connection map
   renderConnectionMap();
+  renderNetworkTopologyMap();
 
   // Activity chart
   renderActivityChart();
@@ -2035,6 +2274,8 @@ async function loadSubHistoryTab() {
     const user = findUserByAnyKey(_currentCardUserKey);
     const hwidLimit = user ? getUserHwidLimit(user) : 0;
     const hwidCount = user ? hwidCountForUser(user) : 0;
+    const subSummary = getSubHistorySummaryForUser(_currentCardUserKey);
+    const appStability = subSummary && subSummary.appStability;
     const hasMixedPlatforms = hwidLimit > 0 ? platforms.size > hwidLimit : platforms.size >= 3;
     const buildVariantWarnAt = Math.max(6, hwidLimit > 0 ? hwidLimit * 2 + 1 : 6);
     const latest = records[0];
@@ -2074,6 +2315,8 @@ async function loadSubHistoryTab() {
         ${subKpiHtml('Запросы', String(records.length), `последний: ${latestDate}`)}
       </div>
 
+      ${renderAppStabilityPanel(appStability)}
+
       <div class="sub-readable-grid">
         <div class="sub-insight-card">
           <div class="sub-readable-title">Что видно простыми словами</div>
@@ -2095,6 +2338,58 @@ async function loadSubHistoryTab() {
   } catch (e) {
     el.innerHTML = '<div class="inv-sub-empty">\u041e\u0448\u0438\u0431\u043a\u0430: ' + esc(e.message) + '</div>';
   }
+}
+
+function getSubHistorySummaryForUser(userKey) {
+  const subHistory = state.data && state.data.subHistory;
+  if (!subHistory || !userKey) return null;
+  if (subHistory[userKey]) return subHistory[userKey];
+  const user = findUserByAnyKey(userKey);
+  if (!user) return null;
+  for (const alias of getUserAliases(user)) {
+    if (subHistory[alias]) return subHistory[alias];
+  }
+  return null;
+}
+
+function renderAppStabilityPanel(stability) {
+  if (!stability) return '';
+  const metrics = stability.metrics || {};
+  const confidence = Number(stability.sharingConfidence || 0);
+  const index = Number(stability.stabilityIndex ?? Math.max(0, 100 - confidence));
+  const mode = confidence >= 100 || stability.verdict === 'confirmed' ? 'danger'
+    : confidence >= 75 || stability.verdict === 'probable' ? 'warn'
+    : confidence >= 45 || stability.verdict === 'watch' ? 'watch'
+    : 'ok';
+  const title = mode === 'danger' ? '100% коллективный аккаунт'
+    : mode === 'warn' ? 'Вероятный шеринг'
+    : mode === 'watch' ? 'Нужно наблюдение'
+    : 'Клиент стабилен';
+  const platforms = (metrics.platforms || []).map(platformName).filter(Boolean).join(' -> ') || 'не определено';
+  const builds = (metrics.buildIds || []).slice(0, 5).map(shortToken).join(' -> ') || 'нет';
+
+  return `<div class="app-stability app-stability-${mode}">
+    <div class="app-stability-head">
+      <div>
+        <div class="sub-readable-title">Индекс стабильности приложения</div>
+        <div class="app-stability-reason">${esc(stability.reason || title)}</div>
+      </div>
+      <div class="app-stability-score">
+        <b>${index}</b><span>/100</span>
+      </div>
+    </div>
+    <div class="app-stability-meter"><div style="width:${Math.max(3, index)}%"></div></div>
+    <div class="app-stability-grid">
+      <span><b>${confidence}%</b> уверенность шеринга</span>
+      <span><b>${metrics.buildSwitchCount || 0}</b> смен build_id</span>
+      <span><b>${metrics.platformSwitchCount || 0}</b> смен платформ</span>
+      <span><b>${metrics.buildSwitchesPerWeek || 0}</b> смен/нед</span>
+    </div>
+    <div class="app-stability-path">
+      <div><span>Платформы</span><code>${esc(platforms)}</code></div>
+      <div><span>Build ID</span><code>${esc(builds)}</code></div>
+    </div>
+  </div>`;
 }
 
 function subKpiHtml(label, value, hint, mode = '') {
@@ -2556,13 +2851,14 @@ function renderHistoryTimeline(data, userKey, currentHours) {
     </div>
   </div>`;
 
+  const visualTimelineHtml = renderEditorTimeline(data, groups, currentHours);
   const timelineHtml = visibleGroups.map(group => historyGroupHtml(group, maxIps)).join('');
   const hiddenCount = Math.max(0, groups.length - visibleGroups.length);
   const hiddenHtml = hiddenCount > 0
     ? `<div class="htl-hidden-note">Показаны последние ${visibleGroups.length} ${pluralRu(visibleGroups.length, 'период', 'периода', 'периодов')}, ещё ${hiddenCount} выше по истории.</div>`
     : '';
 
-  return `${periodHtml}${summaryHtml}<div class="htl-group-list">${timelineHtml}${hiddenHtml}</div>`;
+  return `${periodHtml}${summaryHtml}${visualTimelineHtml}<div class="htl-group-list">${timelineHtml}${hiddenHtml}</div>`;
 }
 
 function historyKpiHtml(value, label, hint) {
@@ -2571,6 +2867,92 @@ function historyKpiHtml(value, label, hint) {
     <div class="htl-kpi-label">${esc(label)}</div>
     <div class="htl-kpi-hint">${esc(hint)}</div>
   </div>`;
+}
+
+function renderEditorTimeline(data, groups, currentHours) {
+  const now = Date.now();
+  const endTs = now;
+  const startTs = endTs - Number(currentHours || data.hours || 24) * 60 * 60 * 1000;
+  const range = Math.max(1, endTs - startTs);
+  const events = (data.events || [])
+    .filter(event => Number(event.ts) >= startTs && Number(event.ts) <= endTs)
+    .sort((a, b) => Number(a.ts) - Number(b.ts));
+
+  const activitySegments = groups
+    .filter(group => (group.ips || []).length > 0)
+    .map(group => {
+      const left = timelinePct(group.startTs, startTs, range);
+      const rawWidth = timelinePct(Math.max(group.endTs + 5 * 60 * 1000, group.startTs + 5 * 60 * 1000), startTs, range) - left;
+      const count = (group.ips || []).length;
+      const cls = count > 5 ? 'danger' : count > 3 ? 'warn' : 'ok';
+      return `<div class="editor-segment editor-segment-${cls}" style="left:${left}%;width:${Math.max(1.8, rawWidth)}%" title="${escAttr(historyRangeLabel(group.startTs, group.endTs))} · ${count} IP"></div>`;
+    }).join('');
+
+  const markersByLane = { ip: [], rule: [], app: [] };
+  for (const event of events) {
+    const lane = editorEventLane(event);
+    const left = timelinePct(event.ts, startTs, range);
+    const cls = editorEventClass(event);
+    const detail = [event.title, event.detail].filter(Boolean).join(' · ');
+    const html = `<button class="editor-marker editor-marker-${cls}" style="left:${left}%" title="${escAttr(detail)}">
+      <span></span>
+    </button>`;
+    if (markersByLane[lane]) markersByLane[lane].push(html);
+  }
+
+  const ticks = Array.from({ length: 7 }, (_, index) => {
+    const ts = startTs + range * index / 6;
+    const d = new Date(ts);
+    const label = currentHours >= 72
+      ? d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+      : d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    return `<span style="left:${(index / 6) * 100}%">${esc(label)}</span>`;
+  }).join('');
+
+  const legend = [
+    ['ok', 'активность'],
+    ['ip', 'IP/ASN'],
+    ['rule', 'правила'],
+    ['app', 'клиент'],
+  ].map(([cls, label]) => `<span><i class="editor-dot editor-dot-${cls}"></i>${label}</span>`).join('');
+
+  return `<div class="editor-timeline">
+    <div class="editor-timeline-head">
+      <div>
+        <div class="htl-readable-title">Поведенческая шкала</div>
+        <div class="htl-readable-sub">Активность, смены IP/ASN, правила и клиентские build/platform на одной оси времени.</div>
+      </div>
+      <div class="editor-legend">${legend}</div>
+    </div>
+    <div class="editor-stage">
+      <div class="editor-axis">${ticks}</div>
+      <div class="editor-lane"><b>Активность</b><div class="editor-track">${activitySegments || '<em>нет активности</em>'}</div></div>
+      <div class="editor-lane"><b>IP / ASN</b><div class="editor-track">${markersByLane.ip.join('') || '<em>нет смен</em>'}</div></div>
+      <div class="editor-lane"><b>Правила</b><div class="editor-track">${markersByLane.rule.join('') || '<em>нет срабатываний</em>'}</div></div>
+      <div class="editor-lane"><b>Клиент</b><div class="editor-track">${markersByLane.app.join('') || '<em>стабилен</em>'}</div></div>
+    </div>
+  </div>`;
+}
+
+function timelinePct(ts, startTs, range) {
+  return Math.max(0, Math.min(100, (Number(ts || startTs) - startTs) / range * 100));
+}
+
+function editorEventLane(event) {
+  const type = String(event.type || '');
+  if (type.includes('build') || type.includes('platform') || type.includes('app_stability')) return 'app';
+  if (type.includes('detection') || type.includes('incident') || type.includes('risk') || type.includes('rule')) return 'rule';
+  if (type.includes('ip') || type.includes('asn') || type.includes('country')) return 'ip';
+  return 'rule';
+}
+
+function editorEventClass(event) {
+  const type = String(event.type || '');
+  if (type.includes('app_stability')) return 'danger';
+  if (type.includes('build') || type.includes('platform')) return 'app';
+  if (type.includes('detection') || type.includes('incident') || type.includes('risk')) return 'rule';
+  if (type.includes('ip') || type.includes('asn') || type.includes('country')) return 'ip';
+  return 'note';
 }
 
 function groupHistoryTimeline(timeline) {
@@ -2731,6 +3113,7 @@ function renderInvestigationEvents(events) {
     schedule_pattern: '📅 Расписание по паттерну',
     multi_platform_sub: '📱 Разные платформы в подписке',
     multi_device_sub: '📲 Много сборок клиента в подписке',
+    app_stability_breakdown: '🧩 Нестабильный клиент',
   };
   const categoryLabels = {
     deterministic: 'крит.',
@@ -2908,6 +3291,7 @@ function userCardHtml(u) {
         schedule_pattern: 'Паттерн по расписанию',
         multi_platform_sub: 'Разные платформы в подписке',
         multi_device_sub: 'Много сборок клиента в подписке',
+        app_stability_breakdown: 'Индекс стабильности приложения',
       };
 
       const titleText = signalTitles[s.id] || s.reason || s.id;
