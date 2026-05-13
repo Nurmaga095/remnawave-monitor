@@ -966,6 +966,10 @@ async function handleUserSrhLive(req, res, parsedUrl) {
     // Try multiple possible response structures
     const raw = resp.json?.response || resp.json?.data || resp.json?.records || resp.json;
     const records = Array.isArray(raw) ? raw : (raw?.records || raw?.items || raw?.data || []);
+    if (records.length > 0) {
+      console.log(`[user-srh-live] FIRST RECORD KEYS:`, Object.keys(records[0]));
+      console.log(`[user-srh-live] FIRST RECORD SAMPLE:`, JSON.stringify(records[0]).substring(0, 500));
+    }
     console.log(`[user-srh-live] Resolved ${records.length} records for ${uuid}`);
     sendJson(res, 200, { records });
   } catch (e) {
