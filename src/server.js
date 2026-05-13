@@ -961,8 +961,13 @@ async function handleUserSrhLive(req, res, parsedUrl) {
   if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
   try {
     const resp = await remnawaveApi('GET', `/api/users/${uuid}/subscription-request-history`);
-    const records = resp.json?.response || [];
-    sendJson(res, 200, { records: Array.isArray(records) ? records : [] });
+    console.log(`[user-srh-live] Raw API response keys:`, Object.keys(resp.json || {}), `statusCode:`, resp.statusCode);
+    console.log(`[user-srh-live] response field type:`, typeof resp.json?.response, Array.isArray(resp.json?.response) ? `array(${resp.json.response.length})` : '');
+    // Try multiple possible response structures
+    const raw = resp.json?.response || resp.json?.data || resp.json?.records || resp.json;
+    const records = Array.isArray(raw) ? raw : (raw?.records || raw?.items || raw?.data || []);
+    console.log(`[user-srh-live] Resolved ${records.length} records for ${uuid}`);
+    sendJson(res, 200, { records });
   } catch (e) {
     console.error('[user-srh-live] error:', e.message);
     sendJson(res, 500, { error: e.message });
@@ -977,8 +982,13 @@ async function handleUserHwidDevices(req, res, parsedUrl) {
   if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
   try {
     const resp = await remnawaveApi('GET', `/api/hwid/devices/${uuid}`);
-    const devices = resp.json?.response || [];
-    sendJson(res, 200, { devices: Array.isArray(devices) ? devices : [] });
+    console.log(`[user-hwid-devices] Raw API response keys:`, Object.keys(resp.json || {}), `statusCode:`, resp.statusCode);
+    console.log(`[user-hwid-devices] response field type:`, typeof resp.json?.response, Array.isArray(resp.json?.response) ? `array(${resp.json.response.length})` : '');
+    // Try multiple possible response structures
+    const raw = resp.json?.response || resp.json?.data || resp.json?.devices || resp.json;
+    const devices = Array.isArray(raw) ? raw : (raw?.devices || raw?.items || raw?.data || []);
+    console.log(`[user-hwid-devices] Resolved ${devices.length} devices for ${uuid}`);
+    sendJson(res, 200, { devices });
   } catch (e) {
     console.error('[user-hwid-devices] error:', e.message);
     sendJson(res, 500, { error: e.message });
