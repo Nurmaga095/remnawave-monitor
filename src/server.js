@@ -782,8 +782,12 @@ function remnawaveApi(method, apiPath, body = null, timeoutMs = 10000) {
         'Accept': 'application/json',
       },
     };
-    const timer = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, timeoutMs);
-    const req = proto.request(opts, (resp) => {
+    let httpReq = null;
+    const timer = setTimeout(() => {
+      if (httpReq) httpReq.destroy();
+      reject(new Error(`Remnawave API timeout (${timeoutMs}ms) for ${method} ${apiPath}`));
+    }, timeoutMs);
+    httpReq = proto.request(opts, (resp) => {
       // Reject redirects to prevent SSRF
       if (resp.statusCode >= 300 && resp.statusCode < 400) {
         clearTimeout(timer);
@@ -794,15 +798,29 @@ function remnawaveApi(method, apiPath, body = null, timeoutMs = 10000) {
       resp.on('data', (c) => chunks.push(c));
       resp.on('end', () => {
         clearTimeout(timer);
+        const text = Buffer.concat(chunks).toString();
+        // Handle empty responses (e.g. 204 No Content)
+        if (!text || text.trim() === '') {
+          if (resp.statusCode >= 200 && resp.statusCode < 300) {
+            resolve({ statusCode: resp.statusCode, json: {} });
+          } else {
+            reject(new Error(`Remnawave API ${method} ${apiPath} returned ${resp.statusCode} with empty body`));
+          }
+          return;
+        }
         try {
-          const text = Buffer.concat(chunks).toString();
           resolve({ statusCode: resp.statusCode, json: JSON.parse(text) });
-        } catch (e) { reject(new Error('Invalid JSON from Remnawave')); }
+        } catch (e) {
+          // Non-JSON response (HTML error page, etc.)
+          const preview = text.substring(0, 200).replace(/\n/g, ' ');
+          console.error(`[remnawaveApi] Non-JSON response from ${method} ${apiPath} (HTTP ${resp.statusCode}): ${preview}`);
+          reject(new Error(`Remnawave API ${method} ${apiPath} returned non-JSON (HTTP ${resp.statusCode}): ${preview}`));
+        }
       });
     });
-    req.on('error', (e) => { clearTimeout(timer); reject(e); });
-    if (body) req.write(JSON.stringify(body));
-    req.end();
+    httpReq.on('error', (e) => { clearTimeout(timer); reject(e); });
+    if (body) httpReq.write(JSON.stringify(body));
+    httpReq.end();
   });
 }
 
@@ -878,7 +896,10 @@ async function handleHwidDevices(req, res, parsedUrl) {
   if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
   try {
     const resp = await remnawaveApi('GET', `/api/hwid/devices/${uuid}`);
-    sendJson(res, 200, resp.json?.response || {});
+    const raw = resp.json?.response;
+    // API may return array directly or { devices: [...] }
+    const devices = Array.isArray(raw) ? raw : (raw?.devices || raw?.items || []);
+    sendJson(res, 200, { devices, total: devices.length });
   } catch (e) {
     console.error('[hwid-devices] error:', e.message);
     sendJson(res, 500, { error: e.message });
@@ -1060,24 +1081,62 @@ async function handleFetchUserIps(req, res, parsedUrl) {
   const uuid = parsedUrl.searchParams.get('uuid') || '';
   if (!uuid) { sendJson(res, 400, { error: 'uuid is required' }); return; }
   try {
-    // Step 1: Submit job
-    const jobResp = await remnawaveApi('POST', `/api/ip-control/fetch-ips/${uuid}`, {});
-    const jobId = jobResp.json?.response?.jobId;
-    if (!jobId) { sendJson(res, 500, { error: 'No jobId returned' }); return; }
+    // Collect IPs from all nodes for this specific user
+    const allNodes = [];
+    const nodesResp = await remnawaveApi('GET', '/api/nodes');
+    const nodeList = nodesResp.json?.response || [];
+    const nodes = Array.isArray(nodeList) ? nodeList : (Array.isArray(nodesResp.json) ? nodesResp.json : []);
 
-    // Step 2: Poll for result (max 15s)
-    const deadline = Date.now() + 15000;
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 500));
-      const result = await remnawaveApi('GET', `/api/ip-control/fetch-ips/result/${jobId}`);
-      const data = result.json?.response;
-      if (data?.isCompleted) {
-        if (data.isFailed) { sendJson(res, 500, { error: 'Job failed' }); return; }
-        sendJson(res, 200, data.result || {});
-        return;
+    for (const node of nodes) {
+      const nodeUuid = node.uuid || node.id;
+      if (!nodeUuid) continue;
+
+      try {
+        // Submit job per node
+        const jobResp = await remnawaveApi('POST', `/api/ip-control/fetch-users-ips/${nodeUuid}`, {});
+        const jobId = jobResp.json?.response?.jobId || jobResp.json?.jobId;
+        if (!jobId) continue;
+
+        // Poll for result (max 10s per node)
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 500));
+          const result = await remnawaveApi('GET', `/api/ip-control/fetch-users-ips/result/${jobId}`);
+          const data = result.json?.response || result.json;
+          if (data?.isCompleted) {
+            if (!data.isFailed) {
+              const resultData = data.result || data;
+              const users = Array.isArray(resultData.users) ? resultData.users : [];
+              for (const u of users) {
+                const uid = String(u.userId || u.id || '');
+                if (uid === uuid || String(u.userUuid || '') === uuid) {
+                  const ips = Array.isArray(u.ips) ? u.ips : [];
+                  const ipList = ips.map(ipEntry => {
+                    if (typeof ipEntry === 'string') return { ip: ipEntry };
+                    return { ip: ipEntry.ip, lastSeen: ipEntry.lastSeen || null };
+                  }).filter(e => e.ip);
+                  if (ipList.length > 0) {
+                    allNodes.push({
+                      nodeUuid: String(nodeUuid),
+                      nodeName: node.name || node.nodeName || nodeUuid.substring(0, 8),
+                      countryCode: node.countryCode || node.country || '',
+                      ips: ipList,
+                    });
+                  }
+                }
+              }
+            }
+            break;
+          }
+          if (data?.isFailed) break;
+        }
+      } catch (nodeErr) {
+        // Skip failed nodes
+        console.error(`[fetch-user-ips] node ${nodeUuid} error:`, nodeErr.message);
       }
     }
-    sendJson(res, 504, { error: 'IP fetch timeout' });
+
+    sendJson(res, 200, { nodes: allNodes });
   } catch (e) {
     console.error('[fetch-user-ips] error:', e.message);
     sendJson(res, 500, { error: e.message });
