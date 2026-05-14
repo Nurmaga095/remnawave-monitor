@@ -2304,7 +2304,9 @@ async function loadSubHistoryTab() {
   try {
     const resp = await fetch('/api/sub-history?userKey=' + encodeURIComponent(_currentCardUserKey));
     const data = await resp.json();
-    const records = data.records || [];
+    const records = Array.isArray(data.records)
+      ? data.records.map(r => ({ ...r, platform: normalizeLiveSrhPlatform(r.platform) }))
+      : [];
     if (records.length === 0) {
       el.innerHTML = '<div class="inv-sub-empty-big"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><p>\u041d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445 \u043e \u0437\u0430\u043f\u0440\u043e\u0441\u0430\u0445 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438</p><span>\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u044f\u0432\u044f\u0442\u0441\u044f \u043f\u043e\u0441\u043b\u0435 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u0438\u0445 \u0446\u0438\u043a\u043b\u043e\u0432 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438</span></div>';
       return;
@@ -2330,6 +2332,11 @@ async function loadSubHistoryTab() {
     const hwidCount = user ? hwidCountForUser(user) : 0;
     const subSummary = getSubHistorySummaryForUser(_currentCardUserKey);
     const appStability = subSummary && subSummary.appStability;
+    const appStabilityContext = {
+      hwidLimit,
+      hwidCount,
+      platformCount: platforms.size,
+    };
     const hasMixedPlatforms = hwidLimit > 0 ? platforms.size > hwidLimit : platforms.size >= 3;
     const buildVariantWarnAt = Math.max(6, hwidLimit > 0 ? hwidLimit * 2 + 1 : 6);
     const latest = records[0];
@@ -2369,7 +2376,7 @@ async function loadSubHistoryTab() {
         ${subKpiHtml('Запросы', String(records.length), `последний: ${latestDate}`)}
       </div>
 
-      ${renderAppStabilityPanel(appStability)}
+      ${renderAppStabilityPanel(appStability, appStabilityContext)}
 
       <div class="sub-readable-grid">
         <div class="sub-insight-card">
@@ -2406,19 +2413,28 @@ function getSubHistorySummaryForUser(userKey) {
   return null;
 }
 
-function renderAppStabilityPanel(stability) {
+function renderAppStabilityPanel(stability, context = {}) {
   if (!stability) return '';
   const metrics = stability.metrics || {};
   const confidence = Number(stability.sharingConfidence || 0);
   const index = Number(stability.stabilityIndex ?? Math.max(0, 100 - confidence));
-  const mode = confidence >= 100 || stability.verdict === 'confirmed' ? 'danger'
+  const platformCount = Number(context.platformCount || metrics.uniquePlatformCount || 0);
+  const hwidLimit = Number(context.hwidLimit || 0);
+  const hwidCount = Number(context.hwidCount || 0);
+  const coveredByHwid = hwidLimit > 0 && hwidCount > 0 && hwidCount <= hwidLimit && platformCount <= hwidLimit;
+  const rawMode = confidence >= 100 || stability.verdict === 'confirmed' ? 'danger'
     : confidence >= 75 || stability.verdict === 'probable' ? 'warn'
     : confidence >= 45 || stability.verdict === 'watch' ? 'watch'
     : 'ok';
-  const title = mode === 'danger' ? '100% коллективный аккаунт'
-    : mode === 'warn' ? 'Вероятный шеринг'
-    : mode === 'watch' ? 'Нужно наблюдение'
+  const mode = coveredByHwid && rawMode !== 'ok' ? 'watch' : rawMode;
+  const title = mode === 'danger' ? 'Нужна проверка по HWID/IP'
+    : mode === 'warn' ? 'Клиентский профиль нестабилен'
+    : mode === 'watch' ? 'Клиентский профиль менялся'
     : 'Клиент стабилен';
+  const reason = coveredByHwid && mode !== 'ok'
+    ? `${stability.reason || title}. HWID в пределах лимита, поэтому это не подтверждает шеринг.`
+    : (stability.reason || title);
+  const confidenceLabel = coveredByHwid ? 'SRH-риск без HWID/IP' : 'оценка SRH-риска';
   const platforms = (metrics.platforms || []).map(platformName).filter(Boolean).join(' -> ') || 'не определено';
   const builds = (metrics.buildIds || []).slice(0, 5).map(shortToken).join(' -> ') || 'нет';
 
@@ -2426,7 +2442,7 @@ function renderAppStabilityPanel(stability) {
     <div class="app-stability-head">
       <div>
         <div class="sub-readable-title">Индекс стабильности приложения</div>
-        <div class="app-stability-reason">${esc(stability.reason || title)}</div>
+        <div class="app-stability-reason">${esc(reason)}</div>
       </div>
       <div class="app-stability-score">
         <b>${index}</b><span>/100</span>
@@ -2434,7 +2450,7 @@ function renderAppStabilityPanel(stability) {
     </div>
     <div class="app-stability-meter"><div style="width:${Math.max(3, index)}%"></div></div>
     <div class="app-stability-grid">
-      <span><b>${confidence}%</b> уверенность шеринга</span>
+      <span><b>${confidence}%</b> ${esc(confidenceLabel)}</span>
       <span><b>${metrics.buildSwitchCount || 0}</b> смен build_id</span>
       <span><b>${metrics.platformSwitchCount || 0}</b> смен платформ</span>
       <span><b>${metrics.buildSwitchesPerWeek || 0}</b> смен/нед</span>
@@ -2843,6 +2859,74 @@ function renderDropReconnectResult(data) {
 }
 
 // ─── Live SRH from Remnawave Panel ──────────────────────────────
+function firstLiveSrhValue(...values) {
+  return values.find((value) => value !== null && value !== undefined && value !== '');
+}
+
+function normalizeLiveSrhPlatform(platform) {
+  const value = String(platform || '').trim().toLowerCase();
+  if (!value) return '';
+  if (value.includes('ios') || value.includes('iphone') || value.includes('ipad')) return 'ios';
+  if (value.includes('android')) return 'android';
+  if (value.includes('windows') || value === 'win32' || value === 'win64') return 'windows';
+  if (value.includes('mac') || value.includes('darwin') || value === 'osx') return 'macos';
+  if (value.includes('linux')) return 'linux';
+  return '';
+}
+
+function parseLiveSrhUserAgent(ua) {
+  if (!ua) return { platform: '', version: '', buildId: '' };
+  const parts = String(ua).split('/');
+  if (parts.length >= 4) {
+    return {
+      platform: normalizeLiveSrhPlatform(parts[2]),
+      version: parts[1] || '',
+      buildId: parts[3] || '',
+    };
+  }
+  if (parts.length >= 2) {
+    return {
+      platform: normalizeLiveSrhPlatform(parts[0]),
+      version: parts[1] || '',
+      buildId: '',
+    };
+  }
+  return { platform: normalizeLiveSrhPlatform(ua), version: '', buildId: '' };
+}
+
+function normalizeLiveSrhTimestamp(value) {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 1000000000000 ? Math.round(value * 1000) : Math.round(value);
+  }
+  const text = String(value).trim();
+  if (!text) return '';
+  if (/^\d+$/.test(text)) {
+    const number = Number(text);
+    return number < 1000000000000 ? Math.round(number * 1000) : Math.round(number);
+  }
+  return text;
+}
+
+function normalizeLiveSrhRecord(record) {
+  const source = record && typeof record === 'object' ? record : {};
+  const userAgent = firstLiveSrhValue(source.userAgent, source.user_agent, source.ua, source.clientUserAgent);
+  const parsedAgent = parseLiveSrhUserAgent(userAgent);
+  const rawTs = firstLiveSrhValue(source.ts, source.requestedAt, source.requestAt, source.request_at, source.createdAt, source.created_at);
+  const ts = normalizeLiveSrhTimestamp(rawTs);
+  const ip = firstLiveSrhValue(source.ip, source.requestIp, source.request_ip, source.clientIp, source.client_ip);
+  return {
+    ...source,
+    ts,
+    requestedAt: firstLiveSrhValue(source.requestedAt, source.requestAt, source.request_at, ts),
+    ip: ip || '',
+    userAgent: userAgent || '',
+    platform: normalizeLiveSrhPlatform(firstLiveSrhValue(source.platform, source.os, source.devicePlatform, parsedAgent.platform)),
+    version: firstLiveSrhValue(source.version, source.appVersion, source.app_version, parsedAgent.version) || '',
+    buildId: firstLiveSrhValue(source.buildId, source.build_id, source.build, parsedAgent.buildId) || '',
+  };
+}
+
 async function fetchLiveSrh(uuid) {
   const container = document.getElementById('live-srh-results');
   if (!container) return;
@@ -2852,7 +2936,7 @@ async function fetchLiveSrh(uuid) {
     if (resp.status === 401) { await handleAuthExpired(); return; }
     const data = await resp.json();
     if (data.error) { container.innerHTML = '<div class="empty-state sm"><p>Ошибка: ' + esc(data.error) + '</p></div>'; return; }
-    const records = data.records || [];
+    const records = Array.isArray(data.records) ? data.records.map(normalizeLiveSrhRecord) : [];
     if (records.length === 0) {
       container.innerHTML = '<div class="empty-state sm"><p>Нет данных SRH в панели</p></div>';
       return;
@@ -2883,17 +2967,18 @@ async function fetchLiveSrh(uuid) {
     for (const r of shown) {
       const ts = r.requestedAt || r.ts || r.createdAt || '';
       const tsLabel = ts ? new Date(ts).toLocaleString('ru-RU') : '—';
+      const platform = platformName(r.platform || '') || '—';
       html += '<div class="live-srh-row">'
         + '<span class="live-srh-ts">' + tsLabel + '</span>'
-        + '<span class="mini-pill">' + esc(platformName(r.platform || '')) + '</span>'
+        + '<span class="mini-pill">' + esc(platform) + '</span>'
         + (r.ip ? '<code>' + esc(r.ip) + '</code>' : '')
-        + (r.buildId ? '<span class="mini-pill">' + esc(r.buildId.substring(0, 12)) + '</span>' : '')
+        + (r.buildId ? '<span class="mini-pill">' + esc(shortToken(r.buildId)) + '</span>' : '')
         + '</div>';
     }
     if (records.length > 15) html += '<div class="live-srh-more">ещё ' + (records.length - 15) + ' записей…</div>';
     html += '</div></div>';
     container.innerHTML = html;
-    toast('SRH загружена: ' + records.length + ' записей', 'ok');
+    toast('SRH загружена: ' + records.length + ' записей' + (data.saved ? ', записано новых: ' + data.saved : ''), 'ok');
   } catch (e) {
     container.innerHTML = '<div class="empty-state sm"><p>Ошибка: ' + esc(e.message) + '</p></div>';
   }
@@ -3398,7 +3483,7 @@ function renderInvestigationEvents(events) {
     multi_node_simultaneous: '🌐 Мульти-нода одновременно',
     schedule_pattern: '📅 Расписание по паттерну',
     multi_platform_sub: '📱 Разные платформы в подписке',
-    multi_device_sub: '📲 Много сборок клиента в подписке',
+    multi_device_sub: '📲 Много вариантов клиента в подписке',
     app_stability_breakdown: '🧩 Нестабильный клиент',
   };
   const categoryLabels = {
@@ -3525,6 +3610,8 @@ function userCardHtml(u) {
   const suspect = isSuspicious(u);
   const observation = isUnderObservation(u);
   const ipSignal = getIpSignal(u);
+  const ipStats = getIpStatsForUser(u);
+  const historicalIpCount = Math.max(historicalIps.length, Number(ipStats.uniqueIps24h || 0));
   const leakRisk = getKeyLeakRisk(u);
   const rawFields = getDisplayUserFields(u);
   const uuid = u.uuid || u.userUuid || u.id || '';
@@ -3644,6 +3731,7 @@ function userCardHtml(u) {
         device: 'устройство', geographic: 'гео', temporal: 'время',
         network: 'сеть', traffic: 'трафик', identity: 'идентификация',
         infrastructure: 'инфраструктура', subscription: 'подписка',
+        connection_count: 'число подключений',
       };
       const typeChips = (conf.types || []).map(t => `<span class="conf-type">${esc(typeLabels[t] || t)}</span>`).join('');
       signalsHtml += `<div class="uc-section">
@@ -3798,7 +3886,7 @@ function userCardHtml(u) {
               <div class="uc-info-item"><span>Подписка</span><b>${esc(subscription)}</b></div>
               <div class="uc-info-item"><span>Активен до</span><b>${esc(expireDate)}</b></div>
               <div class="uc-info-item"><span>HWID за 30д</span><b>${churn30d || '—'}</b></div>
-              <div class="uc-info-item"><span>Историч. IP</span><b>${historicalIps.length}</b></div>
+              <div class="uc-info-item"><span>Историч. IP</span><b>${historicalIpCount}</b></div>
             </div>
 
             <div class="uc-section" style="margin:0;border:none;border-radius:0">

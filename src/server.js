@@ -954,6 +954,100 @@ async function handleUserBandwidth(req, res, parsedUrl) {
 }
 
 // ─── Per-User SRH (Live from Remnawave Panel) ──────────────────
+function normalizeSrhPlatform(platform) {
+  const value = String(platform || '').trim().toLowerCase();
+  if (!value) return null;
+  if (value.includes('ios') || value.includes('iphone') || value.includes('ipad')) return 'ios';
+  if (value.includes('android')) return 'android';
+  if (value.includes('windows') || value === 'win32' || value === 'win64') return 'windows';
+  if (value.includes('mac') || value.includes('darwin') || value === 'osx') return 'macos';
+  if (value.includes('linux')) return 'linux';
+  return null;
+}
+
+function parseSubUserAgent(ua) {
+  if (!ua) return { platform: null, appVersion: null, buildId: null };
+  const parts = String(ua).split('/');
+  if (parts.length >= 4) {
+    return {
+      platform: normalizeSrhPlatform(parts[2]),
+      appVersion: parts[1] || null,
+      buildId: parts[3] || null,
+    };
+  }
+  if (parts.length >= 2) {
+    return {
+      platform: normalizeSrhPlatform(parts[0]),
+      appVersion: parts[1] || null,
+      buildId: null,
+    };
+  }
+  return { platform: normalizeSrhPlatform(ua), appVersion: null, buildId: null };
+}
+
+function firstSrhValue(...values) {
+  return values.find((value) => value !== null && value !== undefined && value !== '');
+}
+
+function normalizeSrhTimestamp(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 1000000000000 ? Math.round(value * 1000) : Math.round(value);
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const number = Number(text);
+    return number < 1000000000000 ? Math.round(number * 1000) : Math.round(number);
+  }
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeLiveSrhRecord(record, fallbackUserUuid) {
+  const source = record && typeof record === 'object' ? record : {};
+  const userAgent = firstSrhValue(source.userAgent, source.user_agent, source.ua, source.clientUserAgent);
+  const parsedAgent = parseSubUserAgent(userAgent);
+  const ts = normalizeSrhTimestamp(firstSrhValue(
+    source.ts,
+    source.requestedAt,
+    source.requestAt,
+    source.request_at,
+    source.createdAt,
+    source.created_at
+  ));
+  const ip = firstSrhValue(source.ip, source.requestIp, source.request_ip, source.clientIp, source.client_ip);
+  const platform = normalizeSrhPlatform(firstSrhValue(source.platform, source.os, source.devicePlatform, parsedAgent.platform));
+  const version = firstSrhValue(source.version, source.appVersion, source.app_version, parsedAgent.appVersion);
+  const buildId = firstSrhValue(source.buildId, source.build_id, source.build, parsedAgent.buildId);
+  const userUuid = firstSrhValue(source.userUuid, source.user_uuid, source.uuid, fallbackUserUuid);
+
+  return {
+    ...source,
+    userUuid,
+    requestAt: ts || firstSrhValue(source.requestAt, source.request_at, source.requestedAt),
+    requestedAt: ts ? new Date(ts).toISOString() : firstSrhValue(source.requestedAt, source.requestAt, source.request_at),
+    ts,
+    requestIp: ip || null,
+    ip: ip || null,
+    userAgent: userAgent || null,
+    ua: userAgent || null,
+    platform: platform || null,
+    appVersion: version || null,
+    version: version || null,
+    buildId: buildId || null,
+  };
+}
+
+function extractLiveSrhRecords(payload) {
+  const raw = payload?.response || payload?.data || payload?.records || payload;
+  if (Array.isArray(raw)) return raw;
+  if (Array.isArray(raw?.records)) return raw.records;
+  if (Array.isArray(raw?.items)) return raw.items;
+  if (Array.isArray(raw?.data)) return raw.data;
+  return [];
+}
+
 async function handleUserSrhLive(req, res, parsedUrl) {
   if (!requireAuth(req, res)) return;
   if (req.method !== 'GET') { sendJson(res, 405, { error: 'Method not allowed' }); return; }
@@ -964,14 +1058,19 @@ async function handleUserSrhLive(req, res, parsedUrl) {
     console.log(`[user-srh-live] Raw API response keys:`, Object.keys(resp.json || {}), `statusCode:`, resp.statusCode);
     console.log(`[user-srh-live] response field type:`, typeof resp.json?.response, Array.isArray(resp.json?.response) ? `array(${resp.json.response.length})` : '');
     // Try multiple possible response structures
-    const raw = resp.json?.response || resp.json?.data || resp.json?.records || resp.json;
-    const records = Array.isArray(raw) ? raw : (raw?.records || raw?.items || raw?.data || []);
+    const records = extractLiveSrhRecords(resp.json);
+    const normalizedRecords = records.map((record) => normalizeLiveSrhRecord(record, uuid));
     if (records.length > 0) {
       console.log(`[user-srh-live] FIRST RECORD KEYS:`, Object.keys(records[0]));
       console.log(`[user-srh-live] FIRST RECORD SAMPLE:`, JSON.stringify(records[0]).substring(0, 500));
     }
-    console.log(`[user-srh-live] Resolved ${records.length} records for ${uuid}`);
-    sendJson(res, 200, { records });
+    let saved = 0;
+    if (store.saveSubHistory && normalizedRecords.length > 0) {
+      saved = store.saveSubHistory(normalizedRecords);
+      if (saved > 0) invalidateStateCache();
+    }
+    console.log(`[user-srh-live] Resolved ${normalizedRecords.length} records for ${uuid}, saved ${saved}`);
+    sendJson(res, 200, { records: normalizedRecords, saved });
   } catch (e) {
     console.error('[user-srh-live] error:', e.message);
     sendJson(res, 500, { error: e.message });

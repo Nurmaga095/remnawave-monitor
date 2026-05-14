@@ -1,12 +1,12 @@
 // ─── Server-side Detection Module v7 — Premium Multi-Signal ────
 // 15 сигналов, 4 категории, 4 уровня:
 //
-// DETERMINISTIC: hwid_over_limit, app_stability_breakdown, confirmed_simultaneous_ips
+// DETERMINISTIC: hwid_over_limit, confirmed_simultaneous_ips
 // STRONG: hwid_churn, temporal_247, multi_city, impossible_travel, velocity_extreme,
 //         fingerprint_cluster, simultaneous_distinct_networks, extracted_key_suspected,
 //         multi_node_simultaneous, confirmed_simultaneous_ips (when excess=1)
 // WEAK: suspicious_travel, velocity_high, fingerprint_match, isp_mix, behavior_shift,
-//       multi_platform_sub, multi_device_sub, schedule_pattern
+//       multi_platform_sub, multi_device_sub, app_stability_breakdown, schedule_pattern
 //
 // critical (60-100) — HWID > лимит or confirmed IP excess
 // high     (40-59)  — 2+ strong сигнала из разных типов доказательств
@@ -98,6 +98,7 @@ function createDetector(options = {}) {
     const userKey = getUserKey(u);
     const keys = getUserAliases(u);
     const entitlement = buildEntitlementContext(state, keys, hwidLimit, hwid);
+    const context = buildContext(u, state);
 
     // ═══ DETERMINISTIC: HWID превышает лимит ═══
     if (hwid > hwidLimit) {
@@ -176,19 +177,18 @@ function createDetector(options = {}) {
     const subPlatformSignal = detectMultiPlatformSub(u, state, keys, hwidLimit, hwid);
     if (subPlatformSignal) signals.push(subPlatformSignal);
 
-    // ═══ DETERMINISTIC: App Stability Breakdown (#13) ═══
-    const appStabilitySignal = detectAppStabilityBreakdown(u, state, keys);
+    // ═══ WEAK: App Stability Breakdown (#13) ═══
+    const appStabilitySignal = detectAppStabilityBreakdown(u, state, keys, hwidLimit, hwid, context);
     if (appStabilitySignal) signals.push(appStabilitySignal);
 
     // ═══ STRONG: Subscription Storm (#12) ═══
-    const subStormSignal = detectSubStorm(u, state, keys);
+    const subStormSignal = detectSubStorm(u, state, keys, hwidLimit, hwid);
     if (subStormSignal) signals.push(subStormSignal);
 
     // ═══ DETERMINISTIC/STRONG: Confirmed Simultaneous IPs (#14) ═══
     const simIpsSignal = detectConfirmedSimultaneousIps(u, state, keys, hwidLimit);
     if (simIpsSignal) signals.push(simIpsSignal);
 
-    const context = buildContext(u, state);
     return { signals, context };
   }
 
@@ -918,25 +918,6 @@ function createDetector(options = {}) {
       };
     }
 
-    if (ids.has('app_stability_breakdown')) {
-      // Only confirm for deterministic category (confidence 100%), not weak/watch
-      const appSignal = active.find(s => s.id === 'app_stability_breakdown');
-      if (appSignal && appSignal.category === 'deterministic') {
-        return {
-          level: 'confirmed',
-          label: 'confirmed_collective_account',
-          reason: 'Клиентский build_id меняется быстрее недельного цикла и одновременно прыгает между платформами.',
-        };
-      }
-      if (appSignal && appSignal.category === 'strong') {
-        return {
-          level: 'probable',
-          label: 'probable_collective_account',
-          reason: 'Нестабильный клиент: частая смена build_id и платформ.',
-        };
-      }
-    }
-
     if (ids.has('confirmed_simultaneous_ips')) {
       const simSignal = active.find(s => s.id === 'confirmed_simultaneous_ips');
       if (simSignal && simSignal.category === 'deterministic') {
@@ -1015,6 +996,13 @@ function createDetector(options = {}) {
       factors.push({
         id: 'hwid_within_limit',
         text: `${hwidCount} устройств из ${hwidLimit} — в пределах лимита тарифа`,
+      });
+    }
+
+    if (active.some(s => s.id === 'app_stability_breakdown') && hwidCount > 0 && hwidCount <= hwidLimit) {
+      factors.push({
+        id: 'client_profile_not_device',
+        text: 'Смены build_id/platform — клиентские признаки, не отдельные устройства без HWID/IP превышения',
       });
     }
 
@@ -1204,7 +1192,7 @@ function createDetector(options = {}) {
     return null;
   }
 
-  function detectAppStabilityBreakdown(u, state, keys) {
+  function detectAppStabilityBreakdown(u, state, keys, hwidLimit, hwidCount, context = {}) {
     const subHistory = state.subHistory;
     if (!subHistory) return null;
 
@@ -1218,45 +1206,37 @@ function createDetector(options = {}) {
     const confidence = Number(stability.sharingConfidence || 0);
     const metrics = stability.metrics || {};
     const platforms = Array.isArray(metrics.platforms) ? metrics.platforms : (hist.platforms || []);
-    const reasonSuffix = stability.reason ? `: ${stability.reason}` : '';
+    const platformCount = platforms.length || Number(metrics.uniquePlatformCount || 0);
+    const buildCount = Number(metrics.uniqueBuildCount || 0);
+    const clientInstabilityScore = Number(metrics.clientInstabilityScore || Math.max(0, 100 - Number(stability.stabilityIndex || 100)));
+    const effectiveLimit = Math.max(1, Number(hwidLimit || GLOBAL_HWID_FALLBACK));
+    const hasHwidEvidence = Number(hwidCount || 0) > 0;
+    const hwidWithinLimit = hasHwidEvidence && Number(hwidCount || 0) <= effectiveLimit;
+    const platformWithinLimit = platformCount === 0 || platformCount <= effectiveLimit;
+    const ipSurface = Number(metrics.uniqueIpCount || hist.ipCount || context.uniqueIps24h || 0);
 
-    if (confidence >= 100 || stability.verdict === 'confirmed') {
-      return {
-        id: 'app_stability_breakdown',
-        category: 'deterministic',
-        active: true,
-        points: 45,
-        reason: `индекс стабильности приложения ${stability.stabilityIndex}/100, уверенность шеринга 100%${reasonSuffix}`,
-      };
-    }
+    // Own devices inside the paid HWID/platform surface explain SRH churn.
+    // build_id is an app/client build variant and must not become an abuse proof.
+    if (hwidWithinLimit && platformWithinLimit) return null;
 
-    if (confidence >= 75 || stability.verdict === 'probable') {
-      return {
-        id: 'app_stability_breakdown',
-        category: 'strong',
-        active: true,
-        points: 25,
-        reason: `нестабильный клиент: ${metrics.uniqueBuildCount || 0} build_id, ${platforms.length || metrics.uniquePlatformCount || 0} платформ, ${metrics.buildSwitchesPerWeek || 0}/нед`,
-      };
-    }
+    const extremeClientChurn = clientInstabilityScore >= 80 || stability.verdict === 'watch' || confidence >= 30;
+    const exceedsClientSurface = platformCount > effectiveLimit || ipSurface > Math.max(effectiveLimit * 2, 6);
+    if (!extremeClientChurn || !exceedsClientSurface) return null;
 
-    if (confidence >= 60 || stability.verdict === 'watch') {
-      return {
-        id: 'app_stability_breakdown',
-        category: 'weak',
-        active: true,
-        points: 10,
-        reason: `клиент меняется чаще обычного: ${metrics.uniqueBuildCount || 0} build_id, ${platforms.length || metrics.uniquePlatformCount || 0} платформ`,
-      };
-    }
-
-    return null;
+    return {
+      id: 'app_stability_breakdown',
+      category: 'weak',
+      active: true,
+      points: 8,
+      reason: `нестабильный SRH-профиль: ${buildCount} build_id, ${platformCount} платформ; требуется подтверждение HWID/IP`,
+    };
   }
 
   // ─── #12 Subscription Storm Detection ────────────────────────
-  // Detects rapid subscription key distribution: many unique buildIds
-  // requesting the subscription in a short time window.
-  function detectSubStorm(u, state, keys) {
+  // Detects rapid subscription key distribution. buildId is only a client
+  // variant; it becomes useful only together with a broad IP surface and
+  // missing/out-of-limit HWID evidence.
+  function detectSubStorm(u, state, keys, hwidLimit, hwidCount) {
     const subHistory = state.subHistory;
     if (!subHistory) return null;
 
@@ -1265,6 +1245,11 @@ function createDetector(options = {}) {
       if (subHistory[key]) { hist = subHistory[key]; break; }
     }
     if (!hist || !Array.isArray(hist.records) || hist.records.length < 3) return null;
+
+    const effectiveLimit = Math.max(1, Number(hwidLimit || GLOBAL_HWID_FALLBACK));
+    const hasHwidEvidence = Number(hwidCount || 0) > 0;
+    const hwidWithinLimit = hasHwidEvidence && Number(hwidCount || 0) <= effectiveLimit;
+    if (hwidWithinLimit) return null;
 
     // Check for burst: many unique buildIds in a 5-minute window
     const STORM_WINDOW_MS = 5 * 60 * 1000;
@@ -1276,11 +1261,12 @@ function createDetector(options = {}) {
       const HOUR_MS = 60 * 60 * 1000;
       const hourRecords = hist.records.filter(r => r.ts && (now - r.ts) < HOUR_MS);
       const hourBuildIds = new Set(hourRecords.map(r => r.buildId).filter(Boolean));
+      const hourIps = new Set(hourRecords.map(r => r.ip).filter(Boolean));
 
-      if (hourBuildIds.size >= 15) {
+      if (hourBuildIds.size >= 15 && hourIps.size > Math.max(effectiveLimit + 1, 3)) {
         return {
-          id: 'sub_storm', category: 'strong', active: true, points: 20,
-          reason: `${hourBuildIds.size} уникальных устройств запросили подписку за последний час`,
+          id: 'sub_storm', category: 'weak', active: true, points: 12,
+          reason: `${hourBuildIds.size} вариантов клиента и ${hourIps.size} IP запросили подписку за последний час`,
         };
       }
 
@@ -1290,17 +1276,17 @@ function createDetector(options = {}) {
     const stormBuildIds = new Set(recentRecords.map(r => r.buildId).filter(Boolean));
     const stormIps = new Set(recentRecords.map(r => r.ip).filter(Boolean));
 
-    if (stormBuildIds.size >= 10) {
+    if (stormBuildIds.size >= 10 && stormIps.size > Math.max(effectiveLimit + 1, 3)) {
       return {
-        id: 'sub_storm', category: 'strong', active: true, points: 30,
-        reason: `шторм подписки: ${stormBuildIds.size} устройств с ${stormIps.size} IP за 5 минут — ключ активно распространяется`,
+        id: 'sub_storm', category: 'strong', active: true, points: 25,
+        reason: `шторм подписки: ${stormBuildIds.size} вариантов клиента с ${stormIps.size} IP за 5 минут`,
       };
     }
 
-    if (stormBuildIds.size >= 5) {
+    if (stormBuildIds.size >= 5 && stormIps.size > Math.max(effectiveLimit + 1, 3)) {
       return {
-        id: 'sub_storm', category: 'strong', active: true, points: 20,
-        reason: `${stormBuildIds.size} устройств запросили подписку за 5 минут`,
+        id: 'sub_storm', category: 'weak', active: true, points: 10,
+        reason: `${stormBuildIds.size} вариантов клиента и ${stormIps.size} IP запросили подписку за 5 минут`,
       };
     }
 

@@ -2000,19 +2000,19 @@ function createStore(options = {}) {
     const parts = String(ua).split('/');
     if (parts.length >= 4) {
       return {
-        platform: parts[2] ? parts[2].toLowerCase() : null,
+        platform: normalizeClientPlatform(parts[2]),
         appVersion: parts[1] || null,
         buildId: parts[3] || null,
       };
     }
     if (parts.length >= 2) {
       return {
-        platform: parts[0] ? parts[0].toLowerCase() : null,
+        platform: normalizeClientPlatform(parts[0]),
         appVersion: parts[1] || null,
         buildId: null,
       };
     }
-    return { platform: ua.toLowerCase(), appVersion: null, buildId: null };
+    return { platform: normalizeClientPlatform(ua), appVersion: null, buildId: null };
   }
 
   const saveSubHistoryTx = db.transaction((records) => {
@@ -2103,36 +2103,29 @@ function createStore(options = {}) {
     }
 
     const buildSwitchesPerWeek = buildSwitchCount / Math.max(spanDays / 7, 1 / 7);
-    const rapidBuildChurn = buildSwitchCount >= 2 && buildSwitchesPerWeek > 1;
-    const threePlatformsFast = platforms.size >= 3 && builds.size >= 3 && spanDays <= 2.25;
-    const deterministicSharing = rapidBuildChurn && platformSwitchCount >= 2 && platforms.size >= 3 && builds.size >= 3;
+    const buildChurnScore = Math.min(35, Math.round(buildSwitchesPerWeek * 1.5));
+    const buildVarietyScore = Math.min(20, Math.max(0, builds.size - 1) * 3);
+    const platformVarietyScore = Math.min(20, Math.max(0, platforms.size - 1) * 8);
+    const platformSwitchScore = Math.min(15, Math.max(0, platformSwitchCount - 1) * 2);
+    const ipVarietyScore = Math.min(10, Math.max(0, ips.size - 1));
+    const clientInstabilityScore = Math.min(100,
+      buildChurnScore + buildVarietyScore + platformVarietyScore + platformSwitchScore + ipVarietyScore);
 
-    let sharingConfidence = 0;
-    if (deterministicSharing || threePlatformsFast) {
-      sharingConfidence = 100;
-    } else {
-      sharingConfidence += Math.min(35, Math.round(buildSwitchesPerWeek * 6));
-      sharingConfidence += Math.min(25, Math.max(0, builds.size - 1) * 8);
-      sharingConfidence += Math.min(30, Math.max(0, platforms.size - 1) * 12);
-      sharingConfidence += Math.min(10, Math.max(0, ips.size - 1) * 2);
-      if (rapidBuildChurn && platformSwitchCount >= 1) sharingConfidence += 15;
-      sharingConfidence = Math.min(95, sharingConfidence);
-    }
+    // SRH build_id/platform are client fingerprints, not device identity.
+    // Keep them as a diagnostic confidence only; HWID/IP evidence decides abuse.
+    const sharingConfidence = Math.min(35, Math.round(clientInstabilityScore * 0.35));
 
-    const stabilityIndex = Math.max(0, 100 - sharingConfidence);
-    const verdict = sharingConfidence >= 100 ? 'confirmed'
-      : sharingConfidence >= 75 ? 'probable'
-      : sharingConfidence >= 45 ? 'watch'
+    const stabilityIndex = Math.max(0, 100 - clientInstabilityScore);
+    const verdict = clientInstabilityScore >= 70 ? 'watch'
+      : clientInstabilityScore >= 45 ? 'notice'
       : 'clean';
 
     const platformList = Array.from(platforms);
-    const reason = verdict === 'confirmed'
-      ? `build_id менялся ${buildSwitchCount} раз за ${formatDaysShort(spanDays)}, платформы: ${platformList.join(', ')}`
-      : verdict === 'probable'
-      ? `частая смена build_id (${buildSwitchesPerWeek.toFixed(1)}/нед) и ${platforms.size} платформ`
-      : verdict === 'watch'
-      ? `нестабильные клиентские признаки: ${builds.size} build_id, ${platforms.size} платформ`
-      : 'Клиентские build/platform выглядят стабильно';
+    const reason = verdict === 'watch'
+      ? `клиентский профиль менялся: ${builds.size} build_id, ${platforms.size} платформ; нужен HWID/IP-контекст`
+      : verdict === 'notice'
+      ? `заметны изменения клиента: ${buildSwitchesPerWeek.toFixed(1)} смен build_id/нед`
+      : 'Клиентские build/platform без самостоятельных признаков риска';
 
     return {
       stabilityIndex,
@@ -2144,6 +2137,7 @@ function createStore(options = {}) {
         uniqueBuildCount: builds.size,
         uniquePlatformCount: platforms.size,
         uniqueIpCount: ips.size,
+        clientInstabilityScore,
         buildSwitchCount,
         platformSwitchCount,
         buildSwitchesPerWeek: Number(buildSwitchesPerWeek.toFixed(2)),
@@ -2162,17 +2156,12 @@ function createStore(options = {}) {
     if (value.includes('windows') || value === 'win32' || value === 'win64') return 'windows';
     if (value.includes('mac') || value.includes('darwin') || value === 'osx') return 'macos';
     if (value.includes('linux')) return 'linux';
-    return value;
+    return '';
   }
 
   function normalizeClientBuild(buildId) {
     const value = String(buildId || '').trim().toLowerCase();
     return value || '';
-  }
-
-  function formatDaysShort(days) {
-    if (days < 1) return `${Math.max(1, Math.round(days * 24))}ч`;
-    return `${days.toFixed(days >= 10 ? 0 : 1)}д`;
   }
 
   function getSubHistoryGrouped() {
@@ -2200,7 +2189,8 @@ function createStore(options = {}) {
       }
       const u = byUser[row.user_key];
       u.requestCount += 1;
-      if (row.platform) u.platforms.add(row.platform);
+      const platform = normalizeClientPlatform(row.platform);
+      if (platform) u.platforms.add(platform);
       if (row.app_version) u.appVersions.add(row.app_version);
       if (row.build_id) u.buildIds.add(row.build_id);
       if (row.request_ip) u.ips.add(row.request_ip);
@@ -2210,7 +2200,7 @@ function createStore(options = {}) {
           ts: row.request_at,
           ip: row.request_ip,
           ua: row.user_agent,
-          platform: row.platform,
+          platform,
           version: row.app_version,
           buildId: row.build_id,
         });
