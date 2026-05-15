@@ -10,6 +10,7 @@ const RANGE_LABELS = {
   '7d': '7д',
 };
 
+// ─── Hover guide: vertical dashed line on cursor ───
 const hoverGuidePlugin = {
   id: 'rwmHoverGuide',
   afterDraw(chart) {
@@ -30,9 +31,74 @@ const hoverGuidePlugin = {
   },
 };
 
+// ─── Glow effect: draw a blurred shadow behind lines ───
+const glowPlugin = {
+  id: 'rwmGlow',
+  beforeDatasetsDraw(chart) {
+    const { ctx } = chart;
+    ctx.save();
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 4;
+  },
+  afterDatasetsDraw(chart) {
+    chart.ctx.restore();
+  },
+};
+
+// ─── Animated pulse on last data point ───
+const lastPointPulsePlugin = {
+  id: 'rwmLastPulse',
+  afterDatasetsDraw(chart) {
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return;
+
+    chart.data.datasets.forEach((ds, i) => {
+      if (ds.label === 'Среднее') return;
+      const meta = chart.getDatasetMeta(i);
+      if (!meta.visible || meta.data.length === 0) return;
+
+      const last = meta.data[meta.data.length - 1];
+      if (!last) return;
+
+      const x = last.x;
+      const y = last.y;
+      const color = ds.borderColor;
+
+      // Outer pulse ring
+      const t = (Date.now() % 2000) / 2000;
+      const scale = 1 + Math.sin(t * Math.PI * 2) * 0.3;
+      const alpha = 0.3 - Math.sin(t * Math.PI * 2) * 0.15;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, 8 * scale, 0, Math.PI * 2);
+      ctx.fillStyle = typeof color === 'string'
+        ? color.replace(/[^,]+\)$/, `${alpha})`)
+        : `rgba(129,140,248,${alpha})`;
+      ctx.fill();
+
+      // Inner solid dot
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      // White ring
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.strokeStyle = chart.options.plugins.rwmHoverGuide?.lineColor || 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.restore();
+    });
+  },
+};
+
 export function createActivityChartController({ getState } = {}) {
   let chartRange = '6h';
   let chart = null;
+  let animFrame = null;
 
   function setChartRange(range, btn) {
     chartRange = RANGE_MS[range] ? range : '6h';
@@ -78,11 +144,26 @@ export function createActivityChartController({ getState } = {}) {
       type: 'line',
       data: buildChartData(data, theme),
       options: buildChartOptions(data, theme),
-      plugins: [hoverGuidePlugin],
+      plugins: [hoverGuidePlugin, lastPointPulsePlugin],
     });
+
+    // Animate pulse
+    startPulseAnimation();
+  }
+
+  function startPulseAnimation() {
+    cancelAnimationFrame(animFrame);
+    function tick() {
+      if (chart && chart.canvas) {
+        chart.draw();
+        animFrame = requestAnimationFrame(tick);
+      }
+    }
+    animFrame = requestAnimationFrame(tick);
   }
 
   function destroy() {
+    cancelAnimationFrame(animFrame);
     destroyChart();
   }
 
@@ -142,7 +223,7 @@ function buildChartData(data, theme) {
 
   const datasets = [
     {
-      label: 'Онлайн',
+      label: 'Пользователи онлайн',
       data: onlineValues,
       borderColor: theme.online,
       backgroundColor(context) {
@@ -150,32 +231,35 @@ function buildChartData(data, theme) {
         if (!area) return theme.onlineFillFallback;
         const gradient = context.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
         gradient.addColorStop(0, theme.onlineFillTop);
-        gradient.addColorStop(0.65, theme.onlineFillMid);
+        gradient.addColorStop(0.3, theme.onlineFillMid);
+        gradient.addColorStop(0.7, theme.onlineFillLow);
         gradient.addColorStop(1, theme.onlineFillBottom);
         return gradient;
       },
       borderWidth: 2.5,
       cubicInterpolationMode: 'monotone',
       fill: true,
-      pointRadius: (context) => context.dataIndex === data.length - 1 ? 3.5 : 0,
-      pointHoverRadius: 5,
-      pointBackgroundColor: theme.online,
-      pointBorderColor: theme.pointBorder,
-      pointBorderWidth: 2,
-      tension: 0.35,
+      pointRadius: 0,
+      pointHoverRadius: 6,
+      pointHoverBackgroundColor: theme.online,
+      pointHoverBorderColor: theme.pointBorder,
+      pointHoverBorderWidth: 2.5,
+      tension: 0.4,
       yAxisID: 'y',
+      order: 1,
     },
     {
       label: 'Среднее',
       data: data.map(() => avgOnline),
       borderColor: theme.avg,
-      borderDash: [6, 6],
+      borderDash: [8, 6],
       borderWidth: 1.5,
       pointRadius: 0,
       pointHoverRadius: 0,
       fill: false,
       tension: 0,
       yAxisID: 'y',
+      order: 3,
     },
   ];
 
@@ -184,17 +268,26 @@ function buildChartData(data, theme) {
       label: 'Подозрительные',
       data: suspectValues,
       borderColor: theme.suspect,
-      backgroundColor: theme.suspectFill,
+      backgroundColor(context) {
+        const area = context.chart.chartArea;
+        if (!area) return theme.suspectFill;
+        const gradient = context.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+        gradient.addColorStop(0, theme.suspectFillTop);
+        gradient.addColorStop(0.5, theme.suspectFillMid);
+        gradient.addColorStop(1, theme.suspectFillBottom);
+        return gradient;
+      },
       borderWidth: 2,
       cubicInterpolationMode: 'monotone',
       fill: true,
-      pointRadius: (context) => context.dataIndex === data.length - 1 && suspectValues[context.dataIndex] > 0 ? 3.5 : 0,
+      pointRadius: 0,
       pointHoverRadius: 5,
-      pointBackgroundColor: theme.suspect,
-      pointBorderColor: theme.pointBorder,
-      pointBorderWidth: 2,
-      tension: 0.35,
+      pointHoverBackgroundColor: theme.suspect,
+      pointHoverBorderColor: theme.pointBorder,
+      pointHoverBorderWidth: 2,
+      tension: 0.4,
       yAxisID: 'y1',
+      order: 2,
     });
   }
 
@@ -203,13 +296,14 @@ function buildChartData(data, theme) {
 
 function buildChartOptions(data, theme) {
   const maxSuspects = Math.max(0, ...data.map((point) => point.suspects));
+  const maxOnline = Math.max(1, ...data.map((point) => point.online));
 
   return {
     responsive: true,
     maintainAspectRatio: false,
     resizeDelay: 80,
     animation: {
-      duration: 320,
+      duration: 600,
       easing: 'easeOutQuart',
     },
     interaction: {
@@ -221,6 +315,7 @@ function buildChartOptions(data, theme) {
         grid: {
           color: theme.grid,
           drawTicks: false,
+          lineWidth: 0.5,
         },
         ticks: {
           color: theme.textMuted,
@@ -232,20 +327,22 @@ function buildChartOptions(data, theme) {
             size: 10,
             weight: 500,
           },
+          padding: 8,
         },
         border: { display: false },
       },
       y: {
         beginAtZero: true,
-        suggestedMax: Math.max(1, ...data.map((point) => point.online)) * 1.15,
+        suggestedMax: maxOnline * 1.18,
         grid: {
           color: theme.grid,
           drawTicks: false,
+          lineWidth: 0.5,
         },
         ticks: {
           color: theme.textMuted,
           precision: 0,
-          padding: 8,
+          padding: 10,
           font: {
             family: 'JetBrains Mono, monospace',
             size: 10,
@@ -258,12 +355,12 @@ function buildChartOptions(data, theme) {
         display: maxSuspects > 0,
         position: 'right',
         beginAtZero: true,
-        suggestedMax: Math.max(1, maxSuspects),
+        suggestedMax: Math.max(1, maxSuspects) * 1.3,
         grid: { drawOnChartArea: false, drawTicks: false },
         ticks: {
           color: theme.suspect,
           precision: 0,
-          padding: 8,
+          padding: 10,
           font: {
             family: 'JetBrains Mono, monospace',
             size: 10,
@@ -287,25 +384,50 @@ function buildChartOptions(data, theme) {
         bodyColor: theme.tooltipBody,
         borderColor: theme.tooltipBorder,
         borderWidth: 1,
-        cornerRadius: 8,
-        padding: 10,
+        cornerRadius: 10,
+        padding: { top: 10, bottom: 10, left: 14, right: 14 },
         displayColors: true,
-        boxWidth: 8,
-        boxHeight: 8,
+        boxWidth: 10,
+        boxHeight: 10,
+        boxPadding: 6,
+        bodySpacing: 6,
+        titleSpacing: 4,
+        titleFont: {
+          family: 'JetBrains Mono, monospace',
+          size: 11,
+          weight: 600,
+        },
+        bodyFont: {
+          family: 'Inter, sans-serif',
+          size: 12,
+          weight: 500,
+        },
         callbacks: {
           title(items) {
             const point = data[items[0]?.dataIndex || 0];
-            return point ? formatFullTime(point.ts) : '';
+            return point ? `📅 ${formatFullTime(point.ts)}` : '';
           },
           label(context) {
             const value = context.parsed.y;
-            return `${context.dataset.label}: ${value}`;
+            const label = context.dataset.label;
+            if (label === 'Среднее') return `  ── avg: ${value}`;
+            if (label === 'Подозрительные') return `  🔴 ${label}: ${value}`;
+            return `  👤 ${label}: ${value}`;
           },
           afterBody(items) {
             const point = data[items[0]?.dataIndex || 0];
-            return point && point.ips > 0 ? [`IP: ${point.ips}`] : [];
+            if (!point || point.ips <= 0) return [];
+            return [`  🌐 IP адресов: ${point.ips}`];
           },
         },
+      },
+    },
+    layout: {
+      padding: {
+        top: 4,
+        right: 4,
+        bottom: 0,
+        left: 0,
       },
     },
   };
@@ -314,22 +436,35 @@ function buildChartOptions(data, theme) {
 function getChartTheme() {
   const isLight = document.documentElement.getAttribute('data-theme') === 'light';
   return {
+    // Online line — indigo/purple gradient feel
     online: isLight ? '#6366f1' : '#818cf8',
-    onlineFillTop: isLight ? 'rgba(99,102,241,0.20)' : 'rgba(129,140,248,0.20)',
-    onlineFillMid: isLight ? 'rgba(99,102,241,0.06)' : 'rgba(129,140,248,0.07)',
+    onlineFillTop: isLight ? 'rgba(99,102,241,0.28)' : 'rgba(129,140,248,0.28)',
+    onlineFillMid: isLight ? 'rgba(99,102,241,0.12)' : 'rgba(129,140,248,0.14)',
+    onlineFillLow: isLight ? 'rgba(99,102,241,0.04)' : 'rgba(129,140,248,0.05)',
     onlineFillBottom: 'rgba(99,102,241,0)',
-    onlineFillFallback: isLight ? 'rgba(99,102,241,0.12)' : 'rgba(129,140,248,0.14)',
+    onlineFillFallback: isLight ? 'rgba(99,102,241,0.15)' : 'rgba(129,140,248,0.16)',
+
+    // Suspect line — warm red
     suspect: isLight ? '#ef4444' : '#f87171',
     suspectFill: isLight ? 'rgba(239,68,68,0.10)' : 'rgba(248,113,113,0.12)',
-    avg: isLight ? 'rgba(99,102,241,0.45)' : 'rgba(129,140,248,0.35)',
-    grid: isLight ? 'rgba(15,23,42,0.07)' : 'rgba(255,255,255,0.055)',
-    textMuted: isLight ? 'rgba(15,23,42,0.48)' : 'rgba(255,255,255,0.38)',
-    hoverLine: isLight ? 'rgba(15,23,42,0.16)' : 'rgba(255,255,255,0.15)',
+    suspectFillTop: isLight ? 'rgba(239,68,68,0.22)' : 'rgba(248,113,113,0.24)',
+    suspectFillMid: isLight ? 'rgba(239,68,68,0.08)' : 'rgba(248,113,113,0.10)',
+    suspectFillBottom: 'rgba(239,68,68,0)',
+
+    // Average line — subtle
+    avg: isLight ? 'rgba(99,102,241,0.35)' : 'rgba(129,140,248,0.28)',
+
+    // Grid & text
+    grid: isLight ? 'rgba(15,23,42,0.05)' : 'rgba(255,255,255,0.04)',
+    textMuted: isLight ? 'rgba(15,23,42,0.42)' : 'rgba(255,255,255,0.32)',
+    hoverLine: isLight ? 'rgba(99,102,241,0.2)' : 'rgba(129,140,248,0.2)',
     pointBorder: isLight ? '#ffffff' : '#111724',
-    tooltipBg: isLight ? 'rgba(255,255,255,0.96)' : 'rgba(17,23,36,0.96)',
-    tooltipTitle: isLight ? '#0f172a' : '#e5e7eb',
-    tooltipBody: isLight ? '#1e293b' : '#cbd5e1',
-    tooltipBorder: isLight ? 'rgba(99,102,241,0.25)' : 'rgba(129,140,248,0.26)',
+
+    // Tooltip
+    tooltipBg: isLight ? 'rgba(255,255,255,0.97)' : 'rgba(15,20,30,0.97)',
+    tooltipTitle: isLight ? '#1e293b' : '#e5e7eb',
+    tooltipBody: isLight ? '#475569' : '#94a3b8',
+    tooltipBorder: isLight ? 'rgba(99,102,241,0.2)' : 'rgba(129,140,248,0.22)',
   };
 }
 
@@ -348,7 +483,7 @@ function drawCanvasMessage(canvas, message) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
   const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-  ctx.fillStyle = isLight ? 'rgba(15,23,42,0.42)' : 'rgba(255,255,255,0.38)';
+  ctx.fillStyle = isLight ? 'rgba(15,23,42,0.36)' : 'rgba(255,255,255,0.32)';
   ctx.font = '600 13px Inter, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
