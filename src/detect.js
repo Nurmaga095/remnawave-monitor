@@ -125,11 +125,15 @@ function createDetector(options = {}) {
 
     // ═══ WEAK: Паттерн 24/7 ═══
     // Demoted: 24/7 activity alone doesn't prove sharing (always-on devices, servers)
+    // Suppressed entirely when HWID is within the paid limit — one person can
+    // legitimately keep VPN running 24/7 on a single device.
     const activity = activityMap[userKey];
-    if (activity && activity.activeHours >= 22 && !isCoveredByPaidDeviceLimit(entitlement)) {
+    if (activity && activity.activeHours >= 22
+        && !isCoveredByPaidDeviceLimit(entitlement)
+        && hwid > hwidLimit) {
       signals.push({
         id: 'temporal_247', category: 'weak', active: true, points: 15,
-        reason: `активность ${activity.activeHours}/24 часов вне оплаченного профиля устройств`,
+        reason: `активность ${activity.activeHours}/24 часов при ${hwid} устройствах (лимит ${hwidLimit})`,
       });
     }
 
@@ -445,12 +449,32 @@ function createDetector(options = {}) {
 
   // ─── #7 Simultaneous Distinct Networks ──────────────────────
   // Measures IP overlap across different ASNs/countries over time.
-  // Only flags when concurrent ASN count EXCEEDS the user's HWID limit.
-  // If user paid for 5 devices, 3 ASNs is normal.
+  // IMPORTANT: In a VPN system, each node has its OWN ASN/exit-IP.
+  // A user connected to 5 nodes will show 5 ASNs — that's normal.
+  // Only flag when ASN diversity EXCEEDS the number of active nodes.
   function detectSimultaneousNetworks(u, state, keys, hwidLimit) {
     const history = getDetectionHistory(state);
     if (history.length < 3) return null;
     const geoByIp = state.geoByIp || {};
+
+    // Count current active nodes for this user
+    const currentEntries = getActiveEntriesForKeys(state, keys, { freshOnly: true });
+    const currentNodes = new Set();
+    let currentMaxPerNode = 0;
+    const currentNodeIps = new Map();
+    for (const entry of currentEntries) {
+      const node = (typeof entry === 'object' && entry.nodeUuid) || '__unknown';
+      currentNodes.add(node);
+      if (!currentNodeIps.has(node)) currentNodeIps.set(node, new Set());
+      const ip = getEntryIp(entry);
+      if (ip) currentNodeIps.get(node).add(ip);
+    }
+    for (const [, ips] of currentNodeIps) {
+      if (ips.size > currentMaxPerNode) currentMaxPerNode = ips.size;
+    }
+
+    // Effective ASN threshold: at least as many as active VPN nodes
+    const effectiveAsnThreshold = Math.max(hwidLimit, currentNodes.size);
 
     // Track ASN sets across recent snapshots to find persistent overlap
     let overlapCount = 0;
@@ -479,41 +503,43 @@ function createDetector(options = {}) {
           }
         }
       }
-      // Only count as overlap if ASN count EXCEEDS the user's device limit
-      if (asns.size > hwidLimit) {
+      // Only count as overlap if ASN count EXCEEDS the effective threshold
+      if (asns.size > effectiveAsnThreshold) {
         overlapCount++;
         if (asns.size > maxConcurrentAsns) {
           maxConcurrentAsns = asns.size;
           maxConcurrentCountries = countries.size;
           maxConcurrentIps = ipCount;
-          overlapDetail = `${asns.size} ASN, ${countries.size} стран, ${ipCount} IP (лимит ${hwidLimit})`;
+          overlapDetail = `${asns.size} ASN, ${countries.size} стран, ${ipCount} IP (порог ${effectiveAsnThreshold}, нод ${currentNodes.size}, лимит ${hwidLimit})`;
         }
       }
     }
 
-    // Persistent overlap across multiple countries = strong evidence.
-    if (overlapCount >= 3 && maxConcurrentCountries >= 2 && maxConcurrentAsns > hwidLimit) {
+    // Also require per-node evidence: if each node has only 1 IP, it's normal VPN
+    if (currentMaxPerNode <= 1 && overlapCount < 5) return null;
+
+    // Persistent overlap across multiple countries = evidence
+    if (overlapCount >= 3 && maxConcurrentCountries >= 2 && maxConcurrentAsns > effectiveAsnThreshold) {
       return {
         id: 'simultaneous_distinct_networks', category: 'weak', active: true,
         points: 15,
         reason: `${overlapCount} снимков с ${overlapDetail} одновременно (${overlapCount * 5} мин пересечения)`,
       };
     }
-    if (overlapCount >= 2 && maxConcurrentCountries >= 2 && maxConcurrentAsns > hwidLimit) {
+    if (overlapCount >= 2 && maxConcurrentCountries >= 2 && maxConcurrentAsns > effectiveAsnThreshold) {
       return {
         id: 'simultaneous_distinct_networks', category: 'weak', active: true,
         points: 10,
-        reason: `${overlapCount} снимков с ${maxConcurrentAsns} ASN из ${maxConcurrentCountries} стран (лимит ${hwidLimit})`,
+        reason: `${overlapCount} снимков с ${maxConcurrentAsns} ASN из ${maxConcurrentCountries} стран (порог ${effectiveAsnThreshold})`,
       };
     }
 
-    // Same-country ASN churn is common with mobile/home providers. Keep it as
-    // a weak hint only when it persists and exceeds the plan by more than one.
-    if (overlapCount >= 3 && maxConcurrentCountries <= 1 && maxConcurrentAsns >= hwidLimit + 2 && maxConcurrentIps >= hwidLimit + 2) {
+    // Same-country ASN churn is common with mobile/home providers
+    if (overlapCount >= 3 && maxConcurrentCountries <= 1 && maxConcurrentAsns >= effectiveAsnThreshold + 2 && maxConcurrentIps >= effectiveAsnThreshold + 2) {
       return {
         id: 'simultaneous_distinct_networks', category: 'weak', active: true,
         points: 15,
-        reason: `${overlapCount} снимков с ${maxConcurrentAsns} ASN в одной стране (${maxConcurrentIps} IP, лимит ${hwidLimit})`,
+        reason: `${overlapCount} снимков с ${maxConcurrentAsns} ASN в одной стране (${maxConcurrentIps} IP, порог ${effectiveAsnThreshold})`,
       };
     }
     return null;
@@ -521,28 +547,47 @@ function createDetector(options = {}) {
 
   // ─── #8 Extracted VLESS Key Detection ───────────────────────
   // HWID is normal, but UUID simultaneously used from more distinct ASNs
-  // than the user's device limit allows. This catches key extraction.
-  // If user paid for 5 devices, 3 ASNs is fine — only flag when > limit.
+  // than expected. This catches key extraction.
+  // IMPORTANT: In a VPN system, each node has its own ASN, so the
+  // effective threshold must account for the number of active nodes.
   function detectExtractedKey(u, state, keys, hwidLimit, hwidCount) {
     // Only fire if HWID is NOT over limit (otherwise hwid_over_limit handles it)
     if (hwidCount > hwidLimit) return null;
 
-    // Collect current ASNs + countries for this user
+    // Collect current ASNs + countries + node info for this user
     const asns = new Set();
     const countries = new Set();
+    const nodes = new Set();
+    const nodeIpCount = new Map();
     let totalIps = 0;
 
     for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
       totalIps++;
+      const node = (typeof entry === 'object' && entry.nodeUuid) || '__unknown';
+      nodes.add(node);
+      if (!nodeIpCount.has(node)) nodeIpCount.set(node, 0);
+      nodeIpCount.set(node, nodeIpCount.get(node) + 1);
       const geo = getGeoForEntry(entry, state);
       if (!geo) continue;
       if (geo.asn) asns.add(String(geo.asn));
       if (geo.countryCode) countries.add(geo.countryCode);
     }
 
-    // Only suspicious if concurrent ASNs EXCEED the device limit
+    // Effective threshold: ASNs up to node count are expected in VPN
+    const effectiveAsnThreshold = Math.max(hwidLimit, nodes.size);
+
+    // Check if any node has multiple IPs (per-node sharing evidence)
+    let maxPerNode = 0;
+    for (const [, count] of nodeIpCount) {
+      if (count > maxPerNode) maxPerNode = count;
+    }
+
+    // If each node has 1 IP and ASNs <= node count — normal VPN usage
+    if (maxPerNode <= 1 && asns.size <= effectiveAsnThreshold) return null;
+
+    // Only suspicious if concurrent ASNs EXCEED the effective threshold
     // AND there are multiple countries (rules out WiFi+mobile+work in same city)
-    if (asns.size > hwidLimit && countries.size >= 2 && totalIps > hwidLimit) {
+    if (asns.size > effectiveAsnThreshold && countries.size >= 2 && totalIps > effectiveAsnThreshold) {
       // Check ipHistory for persistence (not just a momentary blip)
       const history = getDetectionHistory(state);
       let multiAsnSnapshots = 0;
@@ -556,21 +601,21 @@ function createDetector(options = {}) {
             if (geo && geo.asn) snapAsns.add(String(geo.asn));
           }
         }
-        if (snapAsns.size > hwidLimit) multiAsnSnapshots++;
+        if (snapAsns.size > effectiveAsnThreshold) multiAsnSnapshots++;
       }
 
       if (multiAsnSnapshots >= 2) {
         return {
           id: 'extracted_key_suspected', category: 'weak', active: true,
           points: 15,
-          reason: `HWID ${hwidCount}/${hwidLimit} (норма), но ${asns.size} ASN из ${countries.size} стран > лимит ${hwidLimit} — вероятно ключ извлечён`,
+          reason: `HWID ${hwidCount}/${hwidLimit} (норма), но ${asns.size} ASN из ${countries.size} стран > порог ${effectiveAsnThreshold} (${nodes.size} нод)`,
         };
       }
 
       return {
         id: 'extracted_key_suspected', category: 'weak', active: true,
         points: 10,
-        reason: `HWID в норме, но ${asns.size} ASN и ${countries.size} стран > лимит ${hwidLimit}`,
+        reason: `HWID в норме, но ${asns.size} ASN и ${countries.size} стран > порог ${effectiveAsnThreshold}`,
       };
     }
 
@@ -578,9 +623,14 @@ function createDetector(options = {}) {
   }
 
   // ─── #9 Multi-Node Simultaneous Detection ──────────────────
-  // Same user active on more DIFFERENT nodes than their HWID limit allows.
-  // If limit=3 and active on 3 nodes — normal.
-  // If limit=2 and active on 4 nodes from different IPs — sharing.
+  // In a VPN system, one device can legitimately connect to MANY nodes
+  // simultaneously (split-tunnel, load balancing, multi-hop, or the client
+  // app choosing the fastest route).  Each node gives a different exit-IP.
+  //
+  // The node count itself is NOT evidence of sharing.
+  // Evidence of sharing: MULTIPLE distinct source IPs arriving at the SAME
+  // node (meaning different physical devices are using the same key on that
+  // node), AND the SOURCE countries of those IPs differ.
   function detectMultiNodeSimultaneous(u, state, keys, hwidLimit) {
     const nodeIps = new Map(); // nodeUuid -> Set of IPs
     const allIps = new Set();
@@ -594,11 +644,18 @@ function createDetector(options = {}) {
     }
 
     const nodeCount = nodeIps.size;
-    if (nodeCount <= hwidLimit) return null;
     const ipCount = allIps.size;
-    if (ipCount <= hwidLimit) return null;
 
-    // Collect country/ASN diversity across nodes
+    // Check max IPs per single node — THIS is the real sharing indicator
+    let maxIpsPerNode = 0;
+    for (const [, ips] of nodeIps) {
+      if (ips.size > maxIpsPerNode) maxIpsPerNode = ips.size;
+    }
+
+    // If every node has only 1 IP — this is normal VPN multi-node usage
+    if (maxIpsPerNode <= 1) return null;
+
+    // Collect country/ASN diversity across the IPs that share a node
     const nodeCountries = new Set();
     const nodeAsns = new Set();
     for (const entry of entries) {
@@ -608,20 +665,21 @@ function createDetector(options = {}) {
       if (geo.asn) nodeAsns.add(String(geo.asn));
     }
 
-    // Different countries from different nodes = very strong
-    if (nodeCountries.size >= 2 && nodeCount > hwidLimit && ipCount > hwidLimit) {
+    // Multiple IPs per node from different countries = strong sharing evidence
+    if (nodeCountries.size >= 2 && maxIpsPerNode > 1 && ipCount > hwidLimit) {
       return {
         id: 'multi_node_simultaneous', category: 'strong', active: true,
         points: 30,
-        reason: `одновременно на ${nodeCount} нодах (${ipCount} IP, лимит ${hwidLimit}) из ${nodeCountries.size} стран, ${nodeAsns.size} ASN`,
+        reason: `${maxIpsPerNode} IP на одну ноду, ${nodeCount} нод (${ipCount} IP, лимит ${hwidLimit}) из ${nodeCountries.size} стран`,
       };
     }
 
-    if (nodeCount > hwidLimit + 1 && ipCount > hwidLimit + 1 && nodeAsns.size > hwidLimit) {
+    // Multiple IPs per node, same country — weaker but still suspicious
+    if (maxIpsPerNode > 1 && ipCount > hwidLimit + 1 && nodeAsns.size > hwidLimit) {
       return {
         id: 'multi_node_simultaneous', category: 'weak', active: true,
         points: 15,
-        reason: `одновременно на ${nodeCount} нодах (${ipCount} IP, ${nodeAsns.size} ASN) при лимите ${hwidLimit}`,
+        reason: `${maxIpsPerNode} IP на одну ноду, ${nodeCount} нод (${ipCount} IP, ${nodeAsns.size} ASN) при лимите ${hwidLimit}`,
       };
     }
 
@@ -1032,6 +1090,21 @@ function createDetector(options = {}) {
       });
     }
 
+    // Multi-node VPN usage (each node gives different exit IP)
+    const nodeSet = new Set();
+    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+      if (typeof entry === 'object' && entry.nodeUuid) nodeSet.add(entry.nodeUuid);
+    }
+    if (nodeSet.size >= 2 && context.ipCount >= 2) {
+      const ipsPerNode = context.ipCount / nodeSet.size;
+      if (ipsPerNode <= 1.5) {
+        factors.push({
+          id: 'multi_node_vpn',
+          text: `Подключён к ${nodeSet.size} нодам VPN — каждая нода даёт свой exit-IP (${context.ipCount} IP ≈ ${ipsPerNode.toFixed(1)}/ноду)`,
+        });
+      }
+    }
+
     return factors;
   }
 
@@ -1428,65 +1501,127 @@ function createDetector(options = {}) {
 
   // ─── #14 Confirmed Simultaneous IPs Detection ─────────────────
   // Counts unique concurrent IPs across consecutive detection snapshots.
-  // Does NOT depend on geo-IP, ASN, or country data.
-  // One person = max ~2 simultaneous IPs (WiFi + mobile).
-  // If confirmed IPs > device_limit + 1 in 2+ consecutive snapshots → sharing.
+  // IMPORTANT: In a VPN system each user connects through multiple NODES.
+  // Each node gives the user a DIFFERENT exit-IP.  Therefore the raw IP
+  // count must be normalised by the number of active nodes.
+  //
+  // A single person with 1 device connected to 5 VPN nodes will show 5+
+  // simultaneous exit-IPs — this is completely normal.
+  //
+  // Real sharing signal: unique IPs PER NODE > 1, sustained over time.
   function detectConfirmedSimultaneousIps(u, state, keys, hwidLimit) {
     const history = getDetectionHistory(state);
     if (history.length < 2) return null;
 
-    // Collect per-snapshot IP sets for this user (recent 12 snapshots ≈ ~1 hour)
+    // ── Count how many distinct nodes this user is currently on ──
+    const currentEntries = getActiveEntriesForKeys(state, keys, { freshOnly: true });
+    const currentNodes = new Set();
+    const currentIps = new Set();
+    const ipsByNode = new Map();          // nodeUuid → Set<ip>
+    const nodesByIp = new Map();          // ip → Set<nodeUuid>
+
+    for (const entry of currentEntries) {
+      const ip = getEntryIp(entry);
+      if (!ip) continue;
+      currentIps.add(ip);
+      const node = (typeof entry === 'object' && entry.nodeUuid) || '__unknown';
+      currentNodes.add(node);
+      if (!ipsByNode.has(node)) ipsByNode.set(node, new Set());
+      ipsByNode.get(node).add(ip);
+      if (!nodesByIp.has(ip)) nodesByIp.set(ip, new Set());
+      nodesByIp.get(ip).add(node);
+    }
+
+    const nodeCount = currentNodes.size;
+
+    // ── Per-node analysis: max IPs from any single node ──
+    // If every node shows only 1 IP → the user is just using VPN normally.
+    let maxIpsPerNode = 0;
+    for (const [, ips] of ipsByNode) {
+      if (ips.size > maxIpsPerNode) maxIpsPerNode = ips.size;
+    }
+
+    // ── Effective threshold ──
+    // Baseline: one person may have device_limit devices × each on its own node.
+    // Plus WiFi ↔ cellular handover adds +1 IP.
+    // When the user is connected to N nodes, N unique IPs is the expected minimum.
+    const effectiveThreshold = Math.max(hwidLimit + 1, nodeCount);
+
+    // Quick check: if IPs map ≤1:1 to nodes and within limit → normal
+    if (maxIpsPerNode <= 1 && currentIps.size <= effectiveThreshold) return null;
+
+    // ── Check same-ASN clustering ──
+    // If ALL IPs belong to the same ASN (= VPN exit nodes of one provider),
+    // and max IPs per node ≤ 1, this is NOT sharing.
+    const asns = new Set();
+    for (const entry of currentEntries) {
+      const geo = getGeoForEntry(entry, state);
+      if (geo && geo.asn) asns.add(String(geo.asn));
+    }
+    const singleAsnCluster = asns.size <= 2 && maxIpsPerNode <= 1;
+    if (singleAsnCluster) return null;
+
+    // ── Historical analysis with node-aware counting ──
     const recentHistory = history.slice(-12);
     const snapshotIps = [];
+    const snapshotMaxPerNode = [];
 
     for (const snap of recentHistory) {
       const ips = new Set();
+      const snapNodeIps = new Map();
       for (const key of keys) {
         const userIps = snap.ips && snap.ips[key];
         if (!Array.isArray(userIps)) continue;
         for (const entry of normalizeIpEntries(userIps)) {
           const ip = getEntryIp(entry);
-          if (ip) ips.add(ip);
+          if (!ip) continue;
+          ips.add(ip);
+          const node = (typeof entry === 'object' && entry.nodeUuid) || '__unknown';
+          if (!snapNodeIps.has(node)) snapNodeIps.set(node, new Set());
+          snapNodeIps.get(node).add(ip);
         }
       }
       snapshotIps.push(ips);
+      let snapMax = 0;
+      for (const [, nIps] of snapNodeIps) {
+        if (nIps.size > snapMax) snapMax = nIps.size;
+      }
+      snapshotMaxPerNode.push(snapMax);
     }
 
-    // Also count current live IPs
-    const currentIps = new Set();
-    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
-      const ip = getEntryIp(entry);
-      if (ip) currentIps.add(ip);
+    if (currentIps.size > 0) {
+      snapshotIps.push(currentIps);
+      snapshotMaxPerNode.push(maxIpsPerNode);
     }
-    if (currentIps.size > 0) snapshotIps.push(currentIps);
 
-    // The baseline: one person can legitimately have WiFi + mobile = 2 IPs
-    // So we use device_limit + 1 as the threshold to be generous
-    const threshold = hwidLimit + 1;
-
-    // Count snapshots where unique IPs exceed threshold
+    // ── Count snapshots where per-node IP count indicates sharing ──
+    // The real signal: MULTIPLE distinct IPs coming from the SAME node = 
+    // different source devices behind that node.
     let overThresholdCount = 0;
     let maxIps = 0;
     let consecutiveExcess = 0;
     let maxConsecutive = 0;
+    let sharingNodeSnapshots = 0; // snapshots where any node has >1 IP
 
     for (let i = 0; i < snapshotIps.length; i++) {
       const ipCount = snapshotIps[i].size;
       if (ipCount > maxIps) maxIps = ipCount;
 
-      if (ipCount > threshold) {
+      if (ipCount > effectiveThreshold) {
         overThresholdCount++;
         consecutiveExcess++;
         if (consecutiveExcess > maxConsecutive) maxConsecutive = consecutiveExcess;
       } else {
         consecutiveExcess = 0;
       }
+
+      if (snapshotMaxPerNode[i] > 1) sharingNodeSnapshots++;
     }
 
-    if (maxIps <= threshold) return null;
+    // ── If no snapshot shows >1 IP per node, this is normal VPN usage ──
+    if (sharingNodeSnapshots === 0 && maxIps <= effectiveThreshold) return null;
 
     // Find confirmed IPs: IPs that appear in 2+ consecutive snapshots
-    // (not just transitional/momentary connections)
     const confirmedIps = new Set();
     for (let i = 1; i < snapshotIps.length; i++) {
       for (const ip of snapshotIps[i]) {
@@ -1497,38 +1632,40 @@ function createDetector(options = {}) {
     }
 
     const confirmedCount = confirmedIps.size;
-    const excess = maxIps - hwidLimit;
+    // Excess is now measured against the effective (node-aware) threshold
+    const excess = maxIps - effectiveThreshold;
+    if (excess <= 0) return null;
 
-    // DETERMINISTIC: confirmed IPs > limit + 1 AND seen in 2+ consecutive snapshots
-    if (confirmedCount > threshold && maxConsecutive >= 2) {
+    // DETERMINISTIC: confirmed IPs significantly > threshold AND per-node evidence
+    if (confirmedCount > effectiveThreshold && maxConsecutive >= 2 && sharingNodeSnapshots >= 2) {
       return {
         id: 'confirmed_simultaneous_ips',
         category: 'deterministic',
         active: true,
         points: Math.min(45, excess * 12),
-        reason: `${confirmedCount} подтверждённых одновременных IP (лимит ${hwidLimit}) в ${maxConsecutive} снимках подряд — шаринг ключа`,
+        reason: `${confirmedCount} подтверждённых IP (порог ${effectiveThreshold} с учётом ${nodeCount} нод, лимит ${hwidLimit}) в ${maxConsecutive} снимках — шаринг ключа`,
       };
     }
 
-    // STRONG: maxIps > threshold in multiple non-consecutive snapshots
-    if (overThresholdCount >= 3 && maxIps > threshold) {
+    // STRONG: sustained excess over effective threshold with per-node evidence
+    if (overThresholdCount >= 3 && excess > 0 && sharingNodeSnapshots >= 2) {
       return {
         id: 'confirmed_simultaneous_ips',
         category: 'strong',
         active: true,
         points: Math.min(30, excess * 10),
-        reason: `до ${maxIps} одновременных IP (лимит ${hwidLimit}) в ${overThresholdCount} снимках за час`,
+        reason: `до ${maxIps} IP (порог ${effectiveThreshold} при ${nodeCount} нодах) в ${overThresholdCount} снимках за час`,
       };
     }
 
-    // STRONG: even 2 snapshots with excess is notable
-    if (maxConsecutive >= 2 && maxIps > threshold) {
+    // STRONG: 2+ consecutive snapshots with excess
+    if (maxConsecutive >= 2 && excess > 0 && sharingNodeSnapshots >= 1) {
       return {
         id: 'confirmed_simultaneous_ips',
         category: 'strong',
         active: true,
         points: Math.min(25, excess * 8),
-        reason: `${maxIps} IP одновременно (лимит ${hwidLimit}), подтверждено в ${maxConsecutive} снимках подряд`,
+        reason: `${maxIps} IP (порог ${effectiveThreshold}) подтверждено в ${maxConsecutive} снимках подряд`,
       };
     }
 
