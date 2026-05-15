@@ -1429,107 +1429,150 @@ function renderNetworkTopologyMap() {
     '#06b6d4', '#10b981', '#f97316', '#ef4444', '#84cc16'
   ];
 
-  // ─── Hero Stats ───
-  let html = `<div class="nt-hero">
-    <div class="nt-hero-card">
-      <div class="nt-hero-icon" style="background:rgba(99,102,241,0.12);color:#818cf8">
-        ${IC._s('<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>', 22)}
-      </div>
-      <div class="nt-hero-data">
-        <div class="nt-hero-val">${topology.nodes.length}</div>
-        <div class="nt-hero-label">Серверов</div>
-      </div>
-    </div>
-    <div class="nt-hero-card">
-      <div class="nt-hero-icon" style="background:rgba(20,184,166,0.12);color:#2dd4bf">
-        ${IC._s('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>', 22)}
-      </div>
-      <div class="nt-hero-data">
-        <div class="nt-hero-val">${topology.asns.length}</div>
-        <div class="nt-hero-label">Провайдеров</div>
-      </div>
-    </div>
-    <div class="nt-hero-card">
-      <div class="nt-hero-icon" style="background:rgba(99,102,241,0.12);color:#818cf8">
-        ${IC._s('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>', 22)}
-      </div>
-      <div class="nt-hero-data">
-        <div class="nt-hero-val">${totalUsers}</div>
-        <div class="nt-hero-label">Пользователей</div>
-      </div>
-    </div>
-    <div class="nt-hero-card ${totalSuspects > 0 ? 'nt-hero-danger' : ''}">
-      <div class="nt-hero-icon" style="background:${totalSuspects > 0 ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.12)'};color:${totalSuspects > 0 ? '#f87171' : '#6ee7b7'}">
-        ${IC._s(totalSuspects > 0
-          ? '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'
-          : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>', 22)}
-      </div>
-      <div class="nt-hero-data">
-        <div class="nt-hero-val">${totalSuspects}</div>
-        <div class="nt-hero-label">${totalSuspects > 0 ? 'Подозрительных' : 'Всё чисто'}</div>
-      </div>
-    </div>
-  </div>`;
+  const topNode = topology.nodes[0] || null;
+  const topAsn = topology.asns[0] || null;
+  const healthState = totalSuspects > 0 ? 'nt-danger' : 'nt-clean';
+  const riskLabel = totalSuspects > 0 ? `${totalSuspects} под проверкой` : 'Сигналов нет';
+  const topNodeHint = topNode ? `${shortTopologyLabel(topNode.name, 18)} · ${topNode.userCount} польз.` : 'нет активных';
+  const topAsnHint = topAsn ? `${topAsn.asnLabel} · ${topAsn.userCount} польз.` : 'нет данных';
 
-  // ─── Charts Row ───
-  html += '<div class="nt-charts-row">';
+  let html = `<div class="nt-topology ${healthState}">
+    <div class="nt-overview">
+      <div class="nt-route-card">
+        <div class="nt-route-head">
+          <span>Активная схема</span>
+          <strong>${topology.edgeCount}</strong>
+        </div>
+        <div class="nt-route-line" aria-label="Серверы, провайдеры и пользователи">
+          <div class="nt-route-stop">
+            <b>${topology.nodes.length}</b>
+            <span>серверов</span>
+          </div>
+          <i></i>
+          <div class="nt-route-stop">
+            <b>${topology.asns.length}</b>
+            <span>провайдеров</span>
+          </div>
+          <i></i>
+          <div class="nt-route-stop">
+            <b>${totalUsers}</b>
+            <span>пользователей</span>
+          </div>
+        </div>
+        <div class="nt-route-status">
+          <span class="nt-status-dot"></span>
+          <span>${riskLabel}</span>
+        </div>
+      </div>
+      <div class="nt-metrics-grid">
+        <div class="nt-metric" style="--tone:#7aa2ff;--tone-rgb:122,162,255">
+          <div class="nt-metric-icon">${IC._s('<rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/>', 20)}</div>
+          <div>
+            <div class="nt-metric-label">Серверы</div>
+            <div class="nt-metric-value">${topology.nodes.length}</div>
+            <div class="nt-metric-note">${esc(topNodeHint)}</div>
+          </div>
+        </div>
+        <div class="nt-metric" style="--tone:#2dd4bf;--tone-rgb:45,212,191">
+          <div class="nt-metric-icon">${IC._s('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c3 3.2 3 14.8 0 18"/><path d="M12 3c-3 3.2-3 14.8 0 18"/>', 20)}</div>
+          <div>
+            <div class="nt-metric-label">Провайдеры</div>
+            <div class="nt-metric-value">${topology.asns.length}</div>
+            <div class="nt-metric-note">${esc(topAsnHint)}</div>
+          </div>
+        </div>
+        <div class="nt-metric" style="--tone:#f59e0b;--tone-rgb:245,158,11">
+          <div class="nt-metric-icon">${IC._s('<path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', 20)}</div>
+          <div>
+            <div class="nt-metric-label">Пользователи</div>
+            <div class="nt-metric-value">${totalUsers}</div>
+            <div class="nt-metric-note">${totalIps} IP</div>
+          </div>
+        </div>
+        <div class="nt-metric ${totalSuspects > 0 ? 'nt-metric-risk' : ''}" style="--tone:${totalSuspects > 0 ? '#f87171' : '#34d399'};--tone-rgb:${totalSuspects > 0 ? '248,113,113' : '52,211,153'}">
+          <div class="nt-metric-icon">${IC._s(totalSuspects > 0
+            ? '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'
+            : '<path d="M20 6 9 17l-5-5"/><path d="M21 12a9 9 0 1 1-4.1-7.54"/>', 20)}</div>
+          <div>
+            <div class="nt-metric-label">Риск</div>
+            <div class="nt-metric-value">${totalSuspects}</div>
+            <div class="nt-metric-note">${totalSuspects > 0 ? 'подозрительных' : 'всё чисто'}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="nt-flow-grid">`;
 
-  // ─── Node Bar Chart ───
-  html += '<div class="nt-chart-card"><div class="nt-chart-title">Распределение по серверам</div><div class="nt-bar-chart">';
+  html += '<section class="nt-flow-panel"><div class="nt-panel-head"><div><h4>Нагрузка серверов</h4><span>пользователи и IP</span></div><b>' + topology.nodes.length + '</b></div><div class="nt-bar-chart">';
   topology.nodes.forEach((node, i) => {
     const pct = Math.max(2, Math.round((node.userCount / maxNodeUsers) * 100));
     const color = nodeColors[i % nodeColors.length];
     const suspectOnNode = (usersByNode.get(node.key) || new Set());
     const sc = [...suspectOnNode].filter(k => suspectKeys.has(k)).length;
     html += `<div class="nt-bar-row">
-      <div class="nt-bar-label">${esc(shortTopologyLabel(node.name, 16))}</div>
+      <div class="nt-bar-index" style="--tone:${color}">${String(i + 1).padStart(2, '0')}</div>
+      <div class="nt-bar-main">
+        <div class="nt-bar-top">
+          <span class="nt-bar-label" title="${escAttr(node.name)}">${esc(shortTopologyLabel(node.name, 24))}</span>
+          <span class="nt-bar-val">${node.userCount} <small>${node.ipCount} IP</small></span>
+        </div>
       <div class="nt-bar-track">
-        <div class="nt-bar-fill" style="width:${pct}%;background:${color};animation:ntBarGrow .6s ease ${i * 0.08}s both"></div>
-        ${sc > 0 ? `<div class="nt-bar-risk-mark" style="width:${Math.max(2, Math.round(sc / node.userCount * pct))}%;background:rgba(239,68,68,0.6)"></div>` : ''}
+          <div class="nt-bar-fill" style="--bar-width:${pct}%;--bar-color:${color};--bar-delay:${i * 70}ms"></div>
+          ${sc > 0 ? `<div class="nt-bar-risk-mark" style="--risk-width:${Math.max(2, Math.round(sc / Math.max(node.userCount, 1) * pct))}%"></div>` : ''}
+        </div>
       </div>
-      <div class="nt-bar-val">${node.userCount} <span>${node.ipCount} IP</span></div>
     </div>`;
   });
-  html += '</div></div>';
+  html += '</div></section>';
 
-  // ─── ASN Bar Chart ───
-  html += '<div class="nt-chart-card"><div class="nt-chart-title">Топ провайдеров (ASN)</div><div class="nt-bar-chart">';
+  html += '<section class="nt-flow-panel"><div class="nt-panel-head"><div><h4>Провайдеры</h4><span>концентрация пользователей</span></div><b>' + topology.asns.length + '</b></div><div class="nt-bar-chart">';
   topology.asns.slice(0, 10).forEach((asn, i) => {
     const pct = Math.max(2, Math.round((asn.userCount / maxAsnUsers) * 100));
     const hot = asn.userCount >= topology.hotUserThreshold;
     const color = hot ? '#ef4444' : '#818cf8';
-    html += `<div class="nt-bar-row">
-      <div class="nt-bar-label"><b>${esc(asn.asnLabel)}</b></div>
+    html += `<div class="nt-bar-row ${hot ? 'nt-bar-hot' : ''}">
+      <div class="nt-bar-index" style="--tone:${color}">${String(i + 1).padStart(2, '0')}</div>
+      <div class="nt-bar-main">
+        <div class="nt-bar-top">
+          <span class="nt-bar-label" title="${escAttr(asn.title)}"><b>${esc(asn.asnLabel)}</b></span>
+          <span class="nt-bar-val">${asn.userCount} <small>${asn.ipCount} IP</small></span>
+        </div>
       <div class="nt-bar-track">
-        <div class="nt-bar-fill" style="width:${pct}%;background:${color};animation:ntBarGrow .6s ease ${i * 0.06}s both"></div>
+          <div class="nt-bar-fill" style="--bar-width:${pct}%;--bar-color:${color};--bar-delay:${i * 55}ms"></div>
+        </div>
       </div>
-      <div class="nt-bar-val">${asn.userCount} <span>${asn.ipCount} IP</span></div>
     </div>`;
   });
-  html += '</div></div>';
-  html += '</div>'; // end charts-row
+  html += '</div></section>';
+  html += '</div>';
 
   // ─── Per-Node User Grid ───
-  html += '<div class="nt-nodes-section"><div class="nt-section-title">Пользователи по серверам</div>';
+  html += '<div class="nt-nodes-section"><div class="nt-section-head"><h4>Пользователи по серверам</h4><span>' + totalUsers + ' всего</span></div>';
   html += '<div class="nt-nodes-grid">';
   topology.nodes.forEach((node, i) => {
     const color = nodeColors[i % nodeColors.length];
     const nodeUserKeys = usersByNode.get(node.key) || new Set();
     const nodeUserList = topology.users.filter(u => nodeUserKeys.has(u.key));
     const suspectHere = nodeUserList.filter(u => u.isSuspect).length;
+    const nodePct = Math.max(2, Math.round((node.userCount / maxNodeUsers) * 100));
 
     html += `<div class="nt-node-card">
-      <div class="nt-node-header" onclick="this.parentElement.classList.toggle('nt-collapsed')">
-        <div class="nt-node-color" style="background:${color}"></div>
+      <button type="button" class="nt-node-header" aria-expanded="true" onclick="const card=this.closest('.nt-node-card');card.classList.toggle('nt-collapsed');this.setAttribute('aria-expanded', card.classList.contains('nt-collapsed') ? 'false' : 'true')">
+        <div class="nt-node-rank" style="--tone:${color}">${i + 1}</div>
         <div class="nt-node-info">
-          <div class="nt-node-name">${esc(shortTopologyLabel(node.name, 24))}</div>
-          <div class="nt-node-meta">${node.userCount} польз. · ${node.ipCount} IP${suspectHere > 0 ? ` · <span class="nt-meta-risk">${suspectHere} подозр.</span>` : ''}</div>
+          <div class="nt-node-name" title="${escAttr(node.name)}">${esc(shortTopologyLabel(node.name, 28))}</div>
+          <div class="nt-node-meter"><span style="width:${nodePct}%;background:${color}"></span></div>
+        </div>
+        <div class="nt-node-stats">
+          <span>${node.userCount} польз.</span>
+          <span>${node.ipCount} IP</span>
+          ${suspectHere > 0 ? `<span class="nt-meta-risk">${suspectHere} риск</span>` : ''}
         </div>
         <div class="nt-node-chevron">${IC._s('<polyline points="6 9 12 15 18 9"/>', 16)}</div>
-      </div>
+      </button>
       <div class="nt-node-body">
         <div class="nt-node-users">
-          ${nodeUserList.length > 0 ? nodeUserList.map(u => `<button class="nt-ubtn ${u.isSuspect ? 'nt-ubtn-risk' : ''}" onclick="openUserCard('${escAttr(u.key)}')">
+          ${nodeUserList.length > 0 ? nodeUserList.map(u => `<button type="button" class="nt-ubtn ${u.isSuspect ? 'nt-ubtn-risk' : ''}" onclick="openUserCard('${escAttr(u.key)}')" title="${escAttr(u.name)}">
             <span class="nt-udot" style="background:${u.isSuspect ? '#ef4444' : color}"></span>
             ${esc(shortTopologyLabel(u.name, 20))}
             <span class="nt-uip">${u.ips.size}</span>
@@ -1538,7 +1581,7 @@ function renderNetworkTopologyMap() {
       </div>
     </div>`;
   });
-  html += '</div></div>';
+  html += '</div></div></div>';
 
   el.innerHTML = html;
 }
