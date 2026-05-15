@@ -10,6 +10,20 @@ const RANGE_LABELS = {
   '7d': '7д',
 };
 
+// ─── Simple moving average to smooth jagged data ───
+function smoothData(points, windowSize = 5) {
+  if (points.length <= windowSize) return points;
+  const result = [];
+  for (let i = 0; i < points.length; i++) {
+    const start = Math.max(0, i - Math.floor(windowSize / 2));
+    const end = Math.min(points.length, i + Math.ceil(windowSize / 2));
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += points[j][1];
+    result.push([points[i][0], Math.round(sum / (end - start))]);
+  }
+  return result;
+}
+
 export function createActivityChartController({ getState } = {}) {
   let chartRange = '6h';
   let chart = null;
@@ -49,7 +63,7 @@ export function createActivityChartController({ getState } = {}) {
       const msg = history.length < 2
         ? 'Ожидание данных активности...'
         : 'Нет данных за выбранный период';
-      container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:rgba(255,255,255,0.38);font:600 13px Inter,sans-serif;">${msg}</div>`;
+      container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:280px;color:rgba(255,255,255,0.38);font:600 13px Inter,sans-serif;">${msg}</div>`;
       return;
     }
 
@@ -57,7 +71,13 @@ export function createActivityChartController({ getState } = {}) {
     const options = buildApexOptions(data, theme, chartRange);
 
     if (chart) {
-      chart.updateOptions(options, true, true, true);
+      try {
+        chart.updateOptions(options, true, true, true);
+      } catch (e) {
+        destroyChart();
+        chart = new ApexCharts(container, options);
+        chart.render();
+      }
     } else {
       chart = new ApexCharts(container, options);
       chart.render();
@@ -70,7 +90,7 @@ export function createActivityChartController({ getState } = {}) {
 
   function destroyChart() {
     if (chart) {
-      chart.destroy();
+      try { chart.destroy(); } catch (e) { /* ignore */ }
       chart = null;
     }
     const el = document.getElementById('activity-chart');
@@ -81,63 +101,68 @@ export function createActivityChartController({ getState } = {}) {
 }
 
 function buildApexOptions(data, theme, range) {
-  const onlineValues = data.map((p) => [p.ts, p.online]);
-  const suspectValues = data.map((p) => [p.ts, p.suspects]);
-  const hasSuspects = data.some((p) => p.suspects > 0);
+  // Downsample if too many points for smoother visual
+  const step = data.length > 200 ? Math.ceil(data.length / 150) : 1;
+  const sampled = step > 1 ? data.filter((_, i) => i % step === 0 || i === data.length - 1) : data;
+
+  const rawOnline = sampled.map((p) => [p.ts, p.online]);
+  const rawSuspect = sampled.map((p) => [p.ts, p.suspects]);
+  const hasSuspects = sampled.some((p) => p.suspects > 0);
+
+  // Smooth the data for a cleaner look
+  const smoothWindow = range === '7d' ? 7 : range === '24h' ? 5 : 4;
+  const onlineValues = smoothData(rawOnline, smoothWindow);
+  const suspectValues = hasSuspects ? smoothData(rawSuspect, Math.max(3, smoothWindow - 1)) : rawSuspect;
+
   const avgOnline = Math.round(data.reduce((s, p) => s + p.online, 0) / data.length);
   const maxOnline = Math.max(1, ...data.map((p) => p.online));
   const maxSuspects = Math.max(0, ...data.map((p) => p.suspects));
 
   const series = [
-    {
-      name: 'Пользователи онлайн',
-      type: 'area',
-      data: onlineValues,
-    },
+    { name: 'Онлайн', data: onlineValues },
   ];
-
   if (hasSuspects) {
-    series.push({
-      name: 'Подозрительные',
-      type: 'area',
-      data: suspectValues,
-    });
+    series.push({ name: 'Подозрительные', data: suspectValues });
   }
 
   const yaxis = [
     {
-      title: { text: undefined },
       min: 0,
-      max: Math.ceil(maxOnline * 1.15),
-      tickAmount: 5,
+      max: Math.ceil(maxOnline * 1.12),
+      tickAmount: 4,
       labels: {
         style: {
-          colors: theme.textMuted,
-          fontSize: '10px',
+          colors: theme.onlineLabel,
+          fontSize: '11px',
           fontFamily: 'JetBrains Mono, monospace',
-          fontWeight: 500,
+          fontWeight: 600,
         },
         formatter: (val) => Math.round(val),
+        offsetX: -4,
       },
+      axisBorder: { show: false },
+      axisTicks: { show: false },
     },
   ];
 
   if (hasSuspects) {
     yaxis.push({
       opposite: true,
-      title: { text: undefined },
       min: 0,
-      max: Math.max(1, Math.ceil(maxSuspects * 1.4)),
-      tickAmount: 4,
+      max: Math.max(2, Math.ceil(maxSuspects * 1.5)),
+      tickAmount: 3,
       labels: {
         style: {
-          colors: theme.suspect,
-          fontSize: '10px',
+          colors: theme.suspectLabel,
+          fontSize: '11px',
           fontFamily: 'JetBrains Mono, monospace',
           fontWeight: 600,
         },
         formatter: (val) => Math.round(val),
+        offsetX: 4,
       },
+      axisBorder: { show: false },
+      axisTicks: { show: false },
     });
   }
 
@@ -145,7 +170,7 @@ function buildApexOptions(data, theme, range) {
     series,
     chart: {
       type: 'area',
-      height: 290,
+      height: 310,
       fontFamily: 'Inter, sans-serif',
       background: 'transparent',
       foreColor: theme.textMuted,
@@ -155,19 +180,19 @@ function buildApexOptions(data, theme, range) {
       animations: {
         enabled: true,
         easing: 'easeinout',
-        speed: 700,
-        animateGradually: { enabled: true, delay: 120 },
-        dynamicAnimation: { enabled: true, speed: 400 },
+        speed: 900,
+        animateGradually: { enabled: true, delay: 80 },
+        dynamicAnimation: { enabled: true, speed: 500 },
       },
       dropShadow: {
         enabled: true,
-        top: 4,
+        enabledOnSeries: [0],
+        top: 6,
         left: 0,
-        blur: 12,
-        opacity: 0.18,
-        color: [theme.onlineGlow, theme.suspectGlow],
+        blur: 20,
+        opacity: 0.35,
+        color: theme.online,
       },
-      sparkline: { enabled: false },
     },
     colors: hasSuspects
       ? [theme.online, theme.suspect]
@@ -177,34 +202,23 @@ function buildApexOptions(data, theme, range) {
       gradient: {
         type: 'vertical',
         shadeIntensity: 0,
-        opacityFrom: [0.45, 0.35],
-        opacityTo: [0.02, 0.02],
-        stops: [0, 90, 100],
-        colorStops: [
-          [
-            { offset: 0, color: theme.online, opacity: 0.4 },
-            { offset: 40, color: theme.online, opacity: 0.15 },
-            { offset: 100, color: theme.online, opacity: 0.01 },
-          ],
-          ...(hasSuspects ? [[
-            { offset: 0, color: theme.suspect, opacity: 0.35 },
-            { offset: 50, color: theme.suspect, opacity: 0.1 },
-            { offset: 100, color: theme.suspect, opacity: 0.01 },
-          ]] : []),
-        ],
+        inverseColors: false,
+        opacityFrom: hasSuspects ? [0.55, 0.4] : [0.55],
+        opacityTo: hasSuspects ? [0.0, 0.0] : [0.0],
+        stops: [0, 95, 100],
       },
     },
     stroke: {
       curve: 'smooth',
-      width: hasSuspects ? [3, 2.5] : [3],
+      width: hasSuspects ? [3.5, 2.5] : [3.5],
       lineCap: 'round',
     },
     dataLabels: { enabled: false },
     markers: {
       size: 0,
-      hover: { sizeOffset: 5 },
+      hover: { sizeOffset: 6 },
       strokeColors: theme.markerStroke,
-      strokeWidth: 2,
+      strokeWidth: 3,
     },
     xaxis: {
       type: 'datetime',
@@ -218,28 +232,39 @@ function buildApexOptions(data, theme, range) {
         datetimeUTC: false,
         datetimeFormatter: {
           hour: 'HH:mm',
-          day: 'dd.MM',
+          day: 'dd MMM',
         },
+        rotate: 0,
+        maxHeight: 30,
       },
       axisBorder: { show: false },
       axisTicks: { show: false },
       crosshairs: {
         show: true,
+        width: 1,
+        position: 'back',
+        opacity: 0.6,
         stroke: {
           color: theme.crosshair,
           width: 1,
-          dashArray: 4,
+          dashArray: 5,
+        },
+        fill: {
+          type: 'solid',
+          color: theme.crosshairFill,
         },
       },
       tooltip: { enabled: false },
     },
     yaxis,
     grid: {
+      show: true,
       borderColor: theme.grid,
-      strokeDashArray: 3,
+      strokeDashArray: 4,
+      position: 'back',
       xaxis: { lines: { show: false } },
       yaxis: { lines: { show: true } },
-      padding: { left: 8, right: 8 },
+      padding: { left: 12, right: 12, top: 0, bottom: 0 },
     },
     legend: { show: false },
     tooltip: {
@@ -252,36 +277,41 @@ function buildApexOptions(data, theme, range) {
         fontFamily: 'Inter, sans-serif',
       },
       x: {
-        format: 'dd.MM HH:mm',
+        format: 'dd.MM.yyyy HH:mm',
       },
       y: {
-        formatter: (val, { seriesIndex }) => {
-          if (seriesIndex === 0) return `${Math.round(val)} чел.`;
-          return `${Math.round(val)}`;
+        formatter: (val, opts) => {
+          if (val === undefined || val === null) return '';
+          const v = Math.round(val);
+          if (opts.seriesIndex === 0) return `<strong>${v}</strong> чел.`;
+          return `<strong>${v}</strong>`;
         },
       },
       marker: { show: true },
-      custom: undefined,
+      fixed: {
+        enabled: false,
+      },
     },
     annotations: {
       yaxis: [{
         y: avgOnline,
-        strokeDashArray: 6,
+        strokeDashArray: 8,
         borderColor: theme.avgLine,
         borderWidth: 1.5,
         label: {
-          text: `avg: ${avgOnline}`,
+          text: `среднее: ${avgOnline}`,
           position: 'left',
           offsetX: 10,
-          offsetY: -4,
+          offsetY: -6,
           style: {
             color: theme.avgText,
             background: theme.avgBg,
             fontSize: '10px',
             fontFamily: 'JetBrains Mono, monospace',
-            fontWeight: 600,
-            padding: { left: 6, right: 6, top: 3, bottom: 3 },
-            borderRadius: 4,
+            fontWeight: 700,
+            padding: { left: 8, right: 8, top: 4, bottom: 4 },
+            borderRadius: 6,
+            cssClass: 'avg-annotation-label',
           },
           borderWidth: 0,
         },
@@ -291,6 +321,7 @@ function buildApexOptions(data, theme, range) {
       breakpoint: 768,
       options: {
         chart: { height: 220 },
+        stroke: { width: hasSuspects ? [2.5, 2] : [2.5] },
       },
     }],
   };
@@ -300,17 +331,22 @@ function getChartTheme() {
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   return {
     isDark,
+    // Line colors — vivid
     online: isDark ? '#818cf8' : '#6366f1',
-    onlineGlow: isDark ? '#818cf8' : '#6366f1',
-    suspect: isDark ? '#f87171' : '#ef4444',
-    suspectGlow: isDark ? '#f87171' : '#ef4444',
-    avgLine: isDark ? 'rgba(129,140,248,0.3)' : 'rgba(99,102,241,0.3)',
-    avgText: isDark ? '#94a3b8' : '#64748b',
-    avgBg: isDark ? 'rgba(15,23,42,0.9)' : 'rgba(255,255,255,0.95)',
-    grid: isDark ? 'rgba(148,163,184,0.08)' : 'rgba(15,23,42,0.06)',
-    textMuted: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(15,23,42,0.42)',
-    crosshair: isDark ? 'rgba(129,140,248,0.25)' : 'rgba(99,102,241,0.25)',
-    markerStroke: isDark ? '#111724' : '#ffffff',
+    suspect: isDark ? '#fb7185' : '#f43f5e',
+    // Label colors on Y axes
+    onlineLabel: isDark ? '#a5b4fc' : '#6366f1',
+    suspectLabel: isDark ? '#fda4af' : '#f43f5e',
+    // Average annotation
+    avgLine: isDark ? 'rgba(129,140,248,0.35)' : 'rgba(99,102,241,0.3)',
+    avgText: isDark ? '#c7d2fe' : '#4f46e5',
+    avgBg: isDark ? 'rgba(17,24,39,0.95)' : 'rgba(255,255,255,0.95)',
+    // Grid & text
+    grid: isDark ? 'rgba(148,163,184,0.07)' : 'rgba(15,23,42,0.06)',
+    textMuted: isDark ? 'rgba(255,255,255,0.32)' : 'rgba(15,23,42,0.4)',
+    crosshair: isDark ? 'rgba(129,140,248,0.35)' : 'rgba(99,102,241,0.3)',
+    crosshairFill: isDark ? 'rgba(129,140,248,0.04)' : 'rgba(99,102,241,0.03)',
+    markerStroke: isDark ? '#0f172a' : '#ffffff',
   };
 }
 

@@ -2181,91 +2181,109 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 .chart-panel {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(99,102,241,0.12);
-  background: linear-gradient(145deg, rgba(17,23,36,0.7), rgba(9,14,22,0.9));
+  border: 1px solid rgba(99,102,241,0.15);
+  background: linear-gradient(160deg, rgba(15,20,35,0.85), rgba(8,12,20,0.95));
+  box-shadow: 0 4px 24px rgba(0,0,0,0.2), inset 0 1px 0 rgba(129,140,248,0.08);
 }
 .chart-panel::before {
   content: '';
   position: absolute;
   top: 0; left: 0; right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent 5%, rgba(99,102,241,0.5) 25%, rgba(167,139,250,0.4) 50%, rgba(236,72,153,0.3) 75%, transparent 95%);
+  height: 3px;
+  background: linear-gradient(90deg, transparent 2%, #6366f1 15%, #818cf8 30%, #a78bfa 45%, #c084fc 55%, #f472b6 70%, #fb7185 85%, transparent 98%);
   z-index: 2;
+  opacity: 0.8;
 }
 .chart-panel::after {
   content: '';
   position: absolute;
-  top: 2px; left: 0; right: 0;
-  height: 80px;
-  background: linear-gradient(180deg, rgba(99,102,241,0.04), transparent);
+  top: 3px; left: 0; right: 0;
+  height: 100px;
+  background: linear-gradient(180deg, rgba(99,102,241,0.06), transparent);
   pointer-events: none;
   z-index: 0;
 }
 [data-theme="light"] .chart-panel {
-  border-color: rgba(99,102,241,0.1);
-  background: linear-gradient(145deg, rgba(255,255,255,0.88), rgba(248,250,252,0.95));
+  border-color: rgba(99,102,241,0.12);
+  background: linear-gradient(160deg, rgba(255,255,255,0.92), rgba(248,250,252,0.97));
+  box-shadow: 0 4px 24px rgba(0,0,0,0.06), inset 0 1px 0 rgba(99,102,241,0.06);
 }
 [data-theme="light"] .chart-panel::before {
-  background: linear-gradient(90deg, transparent 5%, rgba(99,102,241,0.35) 25%, rgba(167,139,250,0.3) 50%, rgba(236,72,153,0.2) 75%, transparent 95%);
+  opacity: 0.5;
 }
 [data-theme="light"] .chart-panel::after {
   background: linear-gradient(180deg, rgba(99,102,241,0.03), transparent);
 }
 .activity-chart-wrap {
-  padding: 4px 8px 0;
+  padding: 4px 4px 0;
   position: relative;
   z-index: 1;
-  min-height: 290px;
+  min-height: 310px;
 }
 #activity-chart {
   width: 100%;
-  min-height: 290px;
+  min-height: 310px;
 }
 
 /* ApexCharts overrides */
 .apexcharts-canvas { background: transparent !important; }
+.apexcharts-area-series .apexcharts-series path {
+  filter: drop-shadow(0 2px 6px rgba(129,140,248,0.2));
+}
 .apexcharts-tooltip {
-  border-radius: 10px !important;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 0 0 1px rgba(129,140,248,0.15) !important;
-  backdrop-filter: blur(12px) !important;
-  -webkit-backdrop-filter: blur(12px) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(129,140,248,0.18) !important;
+  backdrop-filter: blur(16px) saturate(1.4) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.4) !important;
 }
 .apexcharts-tooltip.apexcharts-theme-dark {
-  background: rgba(15,20,30,0.92) !important;
-  border: 1px solid rgba(129,140,248,0.2) !important;
+  background: rgba(10,15,25,0.94) !important;
+  border: 1px solid rgba(129,140,248,0.25) !important;
   color: #e2e8f0 !important;
 }
 .apexcharts-tooltip.apexcharts-theme-dark .apexcharts-tooltip-title {
-  background: rgba(129,140,248,0.08) !important;
-  border-bottom: 1px solid rgba(129,140,248,0.15) !important;
+  background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(167,139,250,0.08)) !important;
+  border-bottom: 1px solid rgba(129,140,248,0.18) !important;
   color: #c7d2fe !important;
   font-family: 'JetBrains Mono', monospace !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   font-size: 11px !important;
+  padding: 8px 12px !important;
 }
 .apexcharts-tooltip.apexcharts-theme-light {
-  background: rgba(255,255,255,0.96) !important;
-  border: 1px solid rgba(99,102,241,0.15) !important;
+  background: rgba(255,255,255,0.97) !important;
+  border: 1px solid rgba(99,102,241,0.18) !important;
 }
 .apexcharts-tooltip.apexcharts-theme-light .apexcharts-tooltip-title {
-  background: rgba(99,102,241,0.05) !important;
-  border-bottom: 1px solid rgba(99,102,241,0.1) !important;
+  background: linear-gradient(135deg, rgba(99,102,241,0.06), rgba(167,139,250,0.04)) !important;
+  border-bottom: 1px solid rgba(99,102,241,0.12) !important;
   font-family: 'JetBrains Mono', monospace !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   font-size: 11px !important;
+  padding: 8px 12px !important;
 }
 .apexcharts-tooltip-series-group {
-  padding: 4px 10px !important;
+  padding: 5px 12px !important;
+}
+.apexcharts-tooltip-text-y-label {
+  font-weight: 600 !important;
 }
 .apexcharts-tooltip-text-y-value {
-  font-weight: 700 !important;
+  font-weight: 800 !important;
   font-family: 'JetBrains Mono', monospace !important;
 }
-.apexcharts-yaxis-annotations line {
-  stroke-dasharray: 6 !important;
+.apexcharts-tooltip-marker {
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
+  box-shadow: 0 0 6px currentColor !important;
+}
+.apexcharts-yaxis-annotations rect {
+  rx: 6 !important;
+  ry: 6 !important;
 }
 .apexcharts-gridlines-horizontal line {
-  stroke-dasharray: 3 !important;
+  stroke-dasharray: 4 !important;
 }
 .apexcharts-xaxis-label, .apexcharts-yaxis-label {
   font-family: 'JetBrains Mono', monospace !important;
@@ -2275,7 +2293,7 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
   display: flex;
   align-items: center;
   gap: 28px;
-  padding: 6px 16px 14px;
+  padding: 4px 16px 14px;
   justify-content: center;
   position: relative;
   z-index: 1;
@@ -2298,29 +2316,29 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 }
 .chart-dot-online {
   background: linear-gradient(135deg, #818cf8, #6366f1);
-  box-shadow: 0 0 10px rgba(129,140,248,0.6), 0 0 20px rgba(129,140,248,0.2);
+  box-shadow: 0 0 10px rgba(129,140,248,0.6), 0 0 24px rgba(129,140,248,0.25);
 }
 .chart-dot-suspect {
-  background: linear-gradient(135deg, #f87171, #ef4444);
-  box-shadow: 0 0 10px rgba(248,113,113,0.6), 0 0 20px rgba(248,113,113,0.2);
+  background: linear-gradient(135deg, #fb7185, #f43f5e);
+  box-shadow: 0 0 10px rgba(251,113,133,0.6), 0 0 24px rgba(251,113,133,0.25);
 }
 .chart-dot-avg {
   background: transparent;
-  border: 2px dashed rgba(129,140,248,0.45);
+  border: 2px dashed rgba(129,140,248,0.5);
   width: 9px; height: 9px;
 }
-.chart-dot-pulse { animation: legend-pulse 2.5s ease-in-out infinite; }
+.chart-dot-pulse { animation: legend-pulse 2s ease-in-out infinite; }
 @keyframes legend-pulse {
   0%, 100% { box-shadow: 0 0 6px currentColor; transform: scale(1); }
-  50% { box-shadow: 0 0 16px currentColor, 0 0 28px currentColor; transform: scale(1.15); }
+  50% { box-shadow: 0 0 18px currentColor, 0 0 32px currentColor; transform: scale(1.2); }
 }
 [data-theme="light"] .chart-dot-online {
   background: linear-gradient(135deg, #6366f1, #4f46e5);
-  box-shadow: 0 0 8px rgba(99,102,241,0.4), 0 0 16px rgba(99,102,241,0.15);
+  box-shadow: 0 0 8px rgba(99,102,241,0.5), 0 0 16px rgba(99,102,241,0.2);
 }
 [data-theme="light"] .chart-dot-suspect {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
-  box-shadow: 0 0 8px rgba(239,68,68,0.4), 0 0 16px rgba(239,68,68,0.15);
+  background: linear-gradient(135deg, #f43f5e, #e11d48);
+  box-shadow: 0 0 8px rgba(244,63,94,0.5), 0 0 16px rgba(244,63,94,0.2);
 }
 @media (max-width: 768px) {
   .activity-chart-wrap { min-height: 220px; }
