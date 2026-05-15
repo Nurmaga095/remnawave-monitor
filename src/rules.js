@@ -214,10 +214,28 @@ function createRuleEngine(db) {
     const trafficBytes = getTrafficBytes(user);
     const hasProxyFlags = getProxyFlags(userIps, stateData.proxyData || {});
 
+    // Node-aware context
+    const nodeIps = new Map();
+    for (const entry of userIps) {
+      const node = (typeof entry === 'object' && entry.nodeUuid) || null;
+      if (!node) continue;
+      if (!nodeIps.has(node)) nodeIps.set(node, new Set());
+      const ip = typeof entry === 'string' ? entry : entry && entry.ip;
+      if (ip) nodeIps.get(node).add(ip);
+    }
+    const nodeCount = nodeIps.size;
+    let maxIpsPerNode = 0;
+    for (const [, ips] of nodeIps) {
+      if (ips.size > maxIpsPerNode) maxIpsPerNode = ips.size;
+    }
+
     const ctx = {
       hwidCount,
       hwidLimit,
       ipCount: userIps.length,
+      nodeCount,
+      maxIpsPerNode,
+      ipsPerNode: nodeCount > 0 ? Math.round((userIps.length / nodeCount) * 100) / 100 : userIps.length,
       isVPN: hasProxyFlags.isVPN,
       isProxy: hasProxyFlags.isProxy,
       isTor: hasProxyFlags.isTor,

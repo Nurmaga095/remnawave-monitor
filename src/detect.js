@@ -215,14 +215,28 @@ function createDetector(options = {}) {
   }
 
   // ─── #4 Multi-City Detection ────────────────────────────────
-  // DEMOTED to 'weak' — geo-IP is unreliable for mobile users
+  // DISABLED for VPN exit-IPs: geo-IP of exit-IPs shows the location
+  // of the VPN NODE, not the user.  A user switching from a Germany
+  // node to an Amsterdam node looks like "multi-city" but isn't.
+  //
+  // This signal is only meaningful if we have real user IPs
+  // (e.g. from subscription request history).
   function detectMultiCity(u, state, keys, entitlement) {
-    const cities = new Map(); // city -> {lat,lon}
-    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+    // Check if user is connected through VPN nodes (most users are)
+    const entries = getActiveEntriesForKeys(state, keys, { freshOnly: true });
+    const nodes = new Set();
+    for (const entry of entries) {
+      if (typeof entry === 'object' && entry.nodeUuid) nodes.add(entry.nodeUuid);
+    }
+    // If connected through VPN nodes, exit-IP geo is NODE geo, not USER geo
+    if (nodes.size >= 1) return null;
+
+    // Fallback: only for direct connections (no VPN nodes)
+    const cities = new Map();
+    for (const entry of entries) {
       const geo = getGeoForEntry(entry, state);
       const point = getGeoPoint(geo);
       if (!geo || !geo.city || !point) continue;
-      // Skip cellular and mobile carriers — their geo is unreliable
       if (geo.connectionType && geo.connectionType.toLowerCase().includes('cellular')) continue;
       if (isMobileCarrierGeo(geo)) continue;
       cities.set(geo.city, point);
@@ -244,18 +258,28 @@ function createDetector(options = {}) {
   }
 
   // ─── #1 Impossible Travel Detection ─────────────────────────
-  // DEMOTED to 'weak' — mobile carrier geo-IP is unreliable
+  // DISABLED for VPN exit-IPs: the "travel" detected is between VPN
+  // node locations (Germany → Amsterdam), not user movement.
+  // Switching VPN servers is instant and looks like teleportation.
   function detectImpossibleTravel(u, state, keys, entitlement) {
+    // Check if user connects through VPN nodes
+    const entries = getActiveEntriesForKeys(state, keys, { freshOnly: true });
+    const nodes = new Set();
+    for (const entry of entries) {
+      if (typeof entry === 'object' && entry.nodeUuid) nodes.add(entry.nodeUuid);
+    }
+    // If connected through VPN nodes, all geo is NODE geo — travel is meaningless
+    if (nodes.size >= 1) return null;
+
+    // Fallback: only for direct connections (no VPN nodes)
     const history = getDetectionHistory(state);
     if (history.length < 2) return null;
-    // Check sequential snapshots for this user
     let prevGeo = null, prevTs = 0;
     let maxSpeed = 0, maxDetail = '';
     for (const snap of history) {
       for (const key of keys) {
         const ips = snap.ips && snap.ips[key];
         if (!ips || ips.length === 0) continue;
-        // Get geo from first IP that has geo data, skip mobile carriers
         let geo = null;
         for (const entry of normalizeIpEntries(ips)) {
           const g = getGeoForEntry(entry, state);
@@ -1385,6 +1409,22 @@ function createDetector(options = {}) {
 
     const stats = getIpStatsForUser(u, state);
 
+    // Node-aware context: how many VPN nodes and IPs per node
+    const nodeIpMap = new Map();
+    for (const entry of entries) {
+      const node = (typeof entry === 'object' && entry.nodeUuid) || null;
+      if (!node) continue;
+      if (!nodeIpMap.has(node)) nodeIpMap.set(node, new Set());
+      const ip = getEntryIp(entry);
+      if (ip) nodeIpMap.get(node).add(ip);
+    }
+    const nodeCount = nodeIpMap.size;
+    let maxIpsPerNode = 0;
+    for (const [, ips] of nodeIpMap) {
+      if (ips.size > maxIpsPerNode) maxIpsPerNode = ips.size;
+    }
+    const ipsPerNode = nodeCount > 0 ? ipCount / nodeCount : ipCount;
+
     return {
       ipCount,
       countries: Array.from(countries),
@@ -1397,6 +1437,9 @@ function createDetector(options = {}) {
       hostingIpCount: stats.hostingIpCount || 0,
       proxyIpCount: stats.proxyIpCount || 0,
       vpnIpCount: stats.vpnIpCount || 0,
+      nodeCount,
+      maxIpsPerNode,
+      ipsPerNode: Math.round(ipsPerNode * 100) / 100,
     };
   }
 
