@@ -193,6 +193,14 @@ function createDetector(options = {}) {
     const simIpsSignal = detectConfirmedSimultaneousIps(u, state, keys, hwidLimit);
     if (simIpsSignal) signals.push(simIpsSignal);
 
+    // ═══ WEAK: IP Churn Per Node (#15) ═══
+    const ipChurnSignal = detectIpChurnPerNode(u, state, keys, hwidLimit);
+    if (ipChurnSignal) signals.push(ipChurnSignal);
+
+    // ═══ WEAK: Sub Request Real Geo (#16) ═══
+    const subGeoSignal = detectSubRequestGeo(u, state, keys, hwidLimit, hwid);
+    if (subGeoSignal) signals.push(subGeoSignal);
+
     return { signals, context };
   }
 
@@ -1709,6 +1717,154 @@ function createDetector(options = {}) {
         active: true,
         points: Math.min(25, excess * 8),
         reason: `${maxIps} IP (порог ${effectiveThreshold}) подтверждено в ${maxConsecutive} снимках подряд`,
+      };
+    }
+
+    return null;
+  }
+
+  // ─── #15 IP Churn Per Node Detection ────────────────────────
+  // Detects when multiple DIFFERENT IPs connect through the SAME VPN node
+  // for the same user over time.  One device on one node = 1 stable IP.
+  // If a single node shows 3+ distinct IPs within an hour, different
+  // physical devices are likely sharing the key through that node.
+  function detectIpChurnPerNode(u, state, keys, hwidLimit) {
+    const history = getDetectionHistory(state);
+    if (history.length < 4) return null;
+
+    // Collect per-node IP sets across recent snapshots
+    const recentHistory = history.slice(-12); // ~1 hour
+    const nodeIpHistory = new Map(); // nodeUuid -> Set<ip>
+
+    for (const snap of recentHistory) {
+      for (const key of keys) {
+        const userIps = snap.ips && snap.ips[key];
+        if (!Array.isArray(userIps)) continue;
+        for (const entry of normalizeIpEntries(userIps)) {
+          const ip = getEntryIp(entry);
+          const node = (typeof entry === 'object' && entry.nodeUuid) || null;
+          if (!ip || !node) continue;
+          if (!nodeIpHistory.has(node)) nodeIpHistory.set(node, new Set());
+          nodeIpHistory.get(node).add(ip);
+        }
+      }
+    }
+
+    // Also add current live IPs
+    for (const entry of getActiveEntriesForKeys(state, keys, { freshOnly: true })) {
+      const ip = getEntryIp(entry);
+      const node = (typeof entry === 'object' && entry.nodeUuid) || null;
+      if (!ip || !node) continue;
+      if (!nodeIpHistory.has(node)) nodeIpHistory.set(node, new Set());
+      nodeIpHistory.get(node).add(ip);
+    }
+
+    // Find the node with the most IP churn
+    let maxChurn = 0;
+    let maxChurnNode = '';
+    for (const [node, ips] of nodeIpHistory) {
+      if (ips.size > maxChurn) {
+        maxChurn = ips.size;
+        maxChurnNode = node;
+      }
+    }
+
+    // Threshold: more than hwidLimit + 1 distinct IPs from ONE node in 1 hour
+    // is suspicious — a single device should have a relatively stable IP on
+    // a given node (maybe 1-2 IP changes per hour max)
+    const churnThreshold = Math.max(hwidLimit + 2, 4);
+
+    if (maxChurn >= churnThreshold + 2) {
+      return {
+        id: 'ip_churn_per_node', category: 'weak', active: true,
+        points: 15,
+        reason: `${maxChurn} разных IP на одной ноде за час (порог ${churnThreshold}) — возможен шаринг через эту ноду`,
+      };
+    }
+
+    if (maxChurn >= churnThreshold) {
+      return {
+        id: 'ip_churn_per_node', category: 'weak', active: true,
+        points: 10,
+        reason: `${maxChurn} разных IP на одной ноде за час (порог ${churnThreshold})`,
+      };
+    }
+
+    return null;
+  }
+
+  // ─── #16 Subscription Request Real Geo Detection ────────────
+  // Uses IPs from subscription request history (sub_request_history)
+  // which are the REAL client IPs (client → sub server directly, no VPN).
+  // This provides reliable geo-detection unlike VPN exit-IPs.
+  function detectSubRequestGeo(u, state, keys, hwidLimit, hwidCount) {
+    const subHistory = state.subHistory;
+    if (!subHistory) return null;
+
+    let hist = null;
+    for (const key of keys) {
+      if (subHistory[key]) { hist = subHistory[key]; break; }
+    }
+    if (!hist || !Array.isArray(hist.records) || hist.records.length < 2) return null;
+    if (!hist.ips || hist.ips.length < 2) return null;
+
+    // Only meaningful if HWID is within limit (otherwise hwid_over_limit handles it)
+    if (hwidCount > hwidLimit) return null;
+
+    const geoByIp = state.geoByIp || {};
+
+    // Get geo for subscription request IPs (real user IPs)
+    const subCountries = new Set();
+    const subCities = new Set();
+    const subAsns = new Set();
+    let geoCount = 0;
+
+    for (const ip of hist.ips) {
+      const geo = geoByIp[ip];
+      if (!geo) continue;
+      geoCount++;
+      if (geo.countryCode) subCountries.add(geo.countryCode);
+      if (geo.city) subCities.add(geo.city);
+      if (geo.asn) subAsns.add(String(geo.asn));
+    }
+
+    if (geoCount < 2) return null;
+
+    // Check for recent time spread (last 24h)
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const recentRecords = hist.records.filter(r => r.ts && (now - r.ts) < DAY);
+    const recentIps = new Set(recentRecords.map(r => r.ip).filter(Boolean));
+
+    const recentCountries = new Set();
+    for (const ip of recentIps) {
+      const geo = geoByIp[ip];
+      if (geo && geo.countryCode) recentCountries.add(geo.countryCode);
+    }
+
+    // Multiple countries from real IPs within 24h = strong sharing indicator
+    if (recentCountries.size >= 3 && recentIps.size > hwidLimit) {
+      return {
+        id: 'sub_request_multi_geo', category: 'strong', active: true,
+        points: 25,
+        reason: `запросы подписки с реальных IP из ${recentCountries.size} стран за 24ч (${recentIps.size} IP) — вероятный шаринг ключа`,
+      };
+    }
+
+    if (recentCountries.size >= 2 && recentIps.size > hwidLimit) {
+      return {
+        id: 'sub_request_multi_geo', category: 'weak', active: true,
+        points: 15,
+        reason: `запросы подписки с реальных IP из ${recentCountries.size} стран за 24ч (${recentIps.size} IP)`,
+      };
+    }
+
+    // Many cities in same country
+    if (subCities.size >= 4 && subAsns.size > hwidLimit + 1) {
+      return {
+        id: 'sub_request_multi_geo', category: 'weak', active: true,
+        points: 10,
+        reason: `запросы подписки из ${subCities.size} городов, ${subAsns.size} ASN (реальные IP)`,
       };
     }
 

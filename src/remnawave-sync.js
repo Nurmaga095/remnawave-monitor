@@ -17,6 +17,13 @@ function createRemnawaveSync(options) {
   const jobTimeoutMs = Number(config.jobTimeoutMs || 15000);
   const detector = createDetector({ hwidFallback: Number(config.hwidFallback || 2) });
 
+  // Auto-notification settings
+  const telegramBotToken = config.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || '';
+  const autoNotifyEnabled = config.autoNotifyEnabled !== false && !!telegramBotToken;
+  const autoNotifyAdminChatId = config.autoNotifyAdminChatId || process.env.TELEGRAM_ADMIN_CHAT_ID || '';
+  const autoNotifyCooldownMs = Number(config.autoNotifyCooldownHours || 24) * 60 * 60 * 1000;
+  const autoNotifiedUsers = new Map(); // userKey -> lastNotifiedAt
+
   let timer = null;
   let runningPromise = null;
   let currentRetryDelay = intervalMs;
@@ -198,6 +205,15 @@ function createRemnawaveSync(options) {
             console.error('[rules] evaluation error:', ruleErr.message);
           }
         }
+
+        // Auto-notify admin about new critical suspects via Telegram
+        if (autoNotifyEnabled && autoNotifyAdminChatId) {
+          try {
+            await sendAutoNotifications(detection);
+          } catch (notifyErr) {
+            console.error('[auto-notify] error:', notifyErr.message);
+          }
+        }
       } catch (detectErr) {
         console.error('[detect] error:', detectErr.message);
       }
@@ -207,6 +223,97 @@ function createRemnawaveSync(options) {
       store.finishSyncRun(runId, 'error', e.message, nextSyncAt);
       throw e;
     }
+  }
+
+  async function sendAutoNotifications(detection) {
+    if (!autoNotifyEnabled || !autoNotifyAdminChatId) return;
+
+    const now = Date.now();
+    const newCriticalSuspects = [];
+
+    for (const suspect of detection.suspects || []) {
+      if (!suspect.key) continue;
+      // Only notify for critical/high risk
+      if (suspect.riskLevel !== 'critical' && suspect.riskLevel !== 'high') continue;
+      // Only confirmed or probable verdicts
+      if (suspect.verdict && suspect.verdict.level !== 'confirmed' && suspect.verdict.level !== 'probable') continue;
+
+      // Check cooldown
+      const lastNotified = autoNotifiedUsers.get(suspect.key);
+      if (lastNotified && (now - lastNotified) < autoNotifyCooldownMs) continue;
+
+      newCriticalSuspects.push(suspect);
+      autoNotifiedUsers.set(suspect.key, now);
+    }
+
+    if (newCriticalSuspects.length === 0) return;
+
+    // Clean up old cooldowns (>48h)
+    for (const [key, ts] of autoNotifiedUsers) {
+      if (now - ts > autoNotifyCooldownMs * 2) autoNotifiedUsers.delete(key);
+    }
+
+    // Build summary message
+    const lines = [`🚨 <b>Обнаружены нарушители (${newCriticalSuspects.length})</b>\n`];
+    for (const s of newCriticalSuspects.slice(0, 10)) {
+      const signals = (s.signals || [])
+        .filter(sig => sig.active)
+        .map(sig => sig.id)
+        .join(', ');
+      const verdictLabel = s.verdict ? s.verdict.label || s.verdict.level || '' : '';
+      lines.push(
+        `👤 <b>${s.name || s.key}</b>`,
+        `   Risk: ${s.riskScore} (${s.riskLevel})${verdictLabel ? ` — ${verdictLabel}` : ''}`,
+        `   Сигналы: ${signals || 'нет'}`,
+        ''
+      );
+    }
+    if (newCriticalSuspects.length > 10) {
+      lines.push(`... и ещё ${newCriticalSuspects.length - 10}`);
+    }
+
+    const message = lines.join('\n');
+
+    try {
+      await sendTelegramMessage(autoNotifyAdminChatId, message);
+      console.log(`[auto-notify] Sent alert for ${newCriticalSuspects.length} suspect(s) to admin`);
+    } catch (e) {
+      console.error(`[auto-notify] Failed to send: ${e.message}`);
+    }
+  }
+
+  function sendTelegramMessage(chatId, text) {
+    return new Promise((resolve, reject) => {
+      const payload = JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: 'HTML',
+      });
+
+      const req = https.request('https://api.telegram.org/bot' + telegramBotToken + '/sendMessage', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+        },
+        timeout: 10000,
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(data);
+          } else {
+            reject(new Error(`Telegram API ${res.statusCode}: ${data.slice(0, 200)}`));
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.write(payload);
+      req.end();
+    });
   }
   async function fetchSubRequestHistory(warnings) {
     try {
