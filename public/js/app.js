@@ -9,6 +9,7 @@ let apiClient;
 let resetSharedState;
 let uiControls;
 let chartControls;
+let topologyRiskOnly = false;
 
 const frontendModulesReady = Promise.all([
   import('./state.js'),
@@ -1546,44 +1547,150 @@ function renderNetworkTopologyMap() {
   html += '</div></section>';
   html += '</div>';
 
-  // ─── Per-Node User Grid ───
-  html += '<div class="nt-nodes-section"><div class="nt-section-head"><h4>Пользователи по серверам</h4><span>' + totalUsers + ' всего</span></div>';
-  html += '<div class="nt-nodes-grid">';
+  // ─── Per-Node User Worklist ───
+  html += `<div class="nt-nodes-section">
+    <div class="nt-users-toolbar">
+      <div class="nt-users-heading">
+        <h4>Пользователи по серверам</h4>
+        <p>${topology.nodes.length} серверов · ${totalUsers} пользователей · ${totalIps} IP</p>
+      </div>
+      <div class="nt-users-tools">
+        <label class="nt-users-search">
+          ${IC._s('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>', 16)}
+          <input id="nt-user-search" type="search" placeholder="Найти сервер, пользователя или ASN" oninput="filterTopologyUsers(this.value)">
+        </label>
+        <button type="button" class="nt-tool-btn ${topologyRiskOnly ? 'active' : ''}" onclick="toggleTopologyRiskFilter(this)">Риск</button>
+        <button type="button" class="nt-tool-btn" onclick="setTopologyServersCollapsed(false)">Раскрыть</button>
+        <button type="button" class="nt-tool-btn" onclick="setTopologyServersCollapsed(true)">Свернуть</button>
+      </div>
+    </div>
+    <div class="nt-users-summary">
+      <span><b>${topology.nodes.length}</b> серверов</span>
+      <span><b>${totalUsers}</b> пользователей</span>
+      <span><b>${totalIps}</b> IP</span>
+      <span class="${totalSuspects > 0 ? 'nt-summary-risk' : 'nt-summary-ok'}"><b>${totalSuspects}</b> риск</span>
+    </div>
+    <div class="nt-server-list">`;
   topology.nodes.forEach((node, i) => {
     const color = nodeColors[i % nodeColors.length];
     const nodeUserKeys = usersByNode.get(node.key) || new Set();
-    const nodeUserList = topology.users.filter(u => nodeUserKeys.has(u.key));
+    const nodeUserList = topology.users
+      .filter(u => nodeUserKeys.has(u.key))
+      .sort((a, b) => Number(b.isSuspect) - Number(a.isSuspect) || b.ips.size - a.ips.size || a.name.localeCompare(b.name));
     const suspectHere = nodeUserList.filter(u => u.isSuspect).length;
     const nodePct = Math.max(2, Math.round((node.userCount / maxNodeUsers) * 100));
+    const sharePct = Math.round((node.userCount / Math.max(totalUsers, 1)) * 100);
+    const ipsPerUser = node.userCount ? (node.ipCount / node.userCount).toFixed(node.ipCount / node.userCount >= 10 ? 0 : 1) : '0';
+    const riskClass = suspectHere > 0 ? ' nt-server-risk' : '';
+    const serverSearch = `${node.name} ${node.userCount} ${node.ipCount} ${nodeUserList.map(u => `${u.name} ${u.asnKey || ''} ${u.asnTitle || ''}`).join(' ')}`.toLowerCase();
+    const statusText = suspectHere > 0 ? `${suspectHere} под проверкой` : (i === 0 ? 'максимальная нагрузка' : 'без тревог');
 
-    html += `<div class="nt-node-card">
-      <button type="button" class="nt-node-header" aria-expanded="true" onclick="const card=this.closest('.nt-node-card');card.classList.toggle('nt-collapsed');this.setAttribute('aria-expanded', card.classList.contains('nt-collapsed') ? 'false' : 'true')">
-        <div class="nt-node-rank" style="--tone:${color}">${i + 1}</div>
-        <div class="nt-node-info">
-          <div class="nt-node-name" title="${escAttr(node.name)}">${esc(shortTopologyLabel(node.name, 28))}</div>
-          <div class="nt-node-meter"><span style="width:${nodePct}%;background:${color}"></span></div>
+    html += `<article class="nt-server-card${riskClass}" data-server-search="${escAttr(serverSearch)}" style="--tone:${color}">
+      <button type="button" class="nt-server-head" aria-expanded="true" onclick="toggleTopologyServerCard(this)">
+        <div class="nt-server-rank">${i + 1}</div>
+        <div class="nt-server-main">
+          <div class="nt-server-title-row">
+            <h5 title="${escAttr(node.name)}">${esc(shortTopologyLabel(node.name, 34))}</h5>
+            <span class="nt-server-status">${esc(statusText)}</span>
+          </div>
+          <div class="nt-server-load" title="${node.userCount} пользователей из ${totalUsers}">
+            <span style="width:${nodePct}%"></span>
+            ${suspectHere > 0 ? `<em style="width:${Math.max(4, Math.round(suspectHere / Math.max(node.userCount, 1) * nodePct))}%"></em>` : ''}
+          </div>
+          <div class="nt-server-context">
+            <span>${sharePct}% от списка</span>
+            <span>${ipsPerUser} IP/польз.</span>
+            <span>${nodeUserList.length} в отображении</span>
+          </div>
         </div>
-        <div class="nt-node-stats">
-          <span>${node.userCount} польз.</span>
-          <span>${node.ipCount} IP</span>
-          ${suspectHere > 0 ? `<span class="nt-meta-risk">${suspectHere} риск</span>` : ''}
+        <div class="nt-server-kpis">
+          <span><b>${node.userCount}</b><small>польз.</small></span>
+          <span><b>${node.ipCount}</b><small>IP</small></span>
+          <span class="${suspectHere > 0 ? 'is-risk' : ''}"><b>${suspectHere}</b><small>риск</small></span>
         </div>
-        <div class="nt-node-chevron">${IC._s('<polyline points="6 9 12 15 18 9"/>', 16)}</div>
+        <div class="nt-server-chevron">${IC._s('<polyline points="6 9 12 15 18 9"/>', 16)}</div>
       </button>
-      <div class="nt-node-body">
-        <div class="nt-node-users">
-          ${nodeUserList.length > 0 ? nodeUserList.map(u => `<button type="button" class="nt-ubtn ${u.isSuspect ? 'nt-ubtn-risk' : ''}" onclick="openUserCard('${escAttr(u.key)}')" title="${escAttr(u.name)}">
-            <span class="nt-udot" style="background:${u.isSuspect ? '#ef4444' : color}"></span>
-            ${esc(shortTopologyLabel(u.name, 20))}
-            <span class="nt-uip">${u.ips.size}</span>
-          </button>`).join('') : '<div class="nt-node-empty">Нет активных пользователей</div>'}
+      <div class="nt-server-body">
+        <div class="nt-user-table-head">
+          <span>Пользователь</span>
+          <span>IP</span>
+          <span>Сеть</span>
+        </div>
+        <div class="nt-user-list">
+          ${nodeUserList.length > 0 ? nodeUserList.map(u => {
+            const userSearch = `${u.name} ${u.key} ${u.asnKey || ''} ${u.asnTitle || ''}`.toLowerCase();
+            return `<button type="button" class="nt-user-row ${u.isSuspect ? 'is-risk' : ''}" data-risk="${u.isSuspect ? '1' : '0'}" data-search="${escAttr(userSearch)}" onclick="openUserCard('${escAttr(u.key)}')" title="${escAttr(u.asnTitle || u.name)}">
+            <span class="nt-user-main">
+              <span class="nt-user-dot" style="background:${u.isSuspect ? '#ef4444' : color}"></span>
+              <span class="nt-user-copy">
+                <b>${esc(shortTopologyLabel(u.name, 28))}</b>
+                <small>${u.isSuspect ? 'подозрительная активность' : esc(shortTopologyLabel(u.key, 30))}</small>
+              </span>
+            </span>
+            <span class="nt-user-ip">${u.ips.size} IP</span>
+            <span class="nt-user-asn">${esc(shortTopologyLabel(u.asnKey || 'ASN нет', 12))}</span>
+            </button>`;
+          }).join('') : '<div class="nt-node-empty">Нет активных пользователей</div>'}
+          <div class="nt-filter-empty" hidden>Ничего не найдено в этом сервере</div>
         </div>
       </div>
-    </div>`;
+    </article>`;
   });
-  html += '</div></div></div>';
+  html += `</div>
+    <div class="nt-global-empty" hidden>По этому фильтру ничего не найдено</div>
+  </div></div>`;
 
   el.innerHTML = html;
+  filterTopologyUsers(document.getElementById('nt-user-search')?.value || '');
+}
+
+function toggleTopologyServerCard(button) {
+  const card = button && button.closest('.nt-server-card');
+  if (!card) return;
+  card.classList.toggle('nt-collapsed');
+  button.setAttribute('aria-expanded', card.classList.contains('nt-collapsed') ? 'false' : 'true');
+}
+
+function setTopologyServersCollapsed(collapsed) {
+  const root = document.getElementById('network-topology-map');
+  if (!root) return;
+  root.querySelectorAll('.nt-server-card').forEach(card => {
+    card.classList.toggle('nt-collapsed', Boolean(collapsed));
+    const head = card.querySelector('.nt-server-head');
+    if (head) head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  });
+}
+
+function toggleTopologyRiskFilter(button) {
+  topologyRiskOnly = !topologyRiskOnly;
+  if (button) button.classList.toggle('active', topologyRiskOnly);
+  const input = document.getElementById('nt-user-search');
+  filterTopologyUsers(input ? input.value : '');
+}
+
+function filterTopologyUsers(value) {
+  const root = document.getElementById('network-topology-map');
+  if (!root) return;
+  const query = String(value || '').trim().toLowerCase();
+  let visibleCards = 0;
+  root.querySelectorAll('.nt-server-card').forEach(card => {
+    const serverMatch = !query || (card.dataset.serverSearch || '').includes(query);
+    let visibleUsers = 0;
+    card.querySelectorAll('.nt-user-row').forEach(row => {
+      const riskOk = !topologyRiskOnly || row.dataset.risk === '1';
+      const textOk = serverMatch || !query || (row.dataset.search || '').includes(query);
+      const show = riskOk && textOk;
+      row.hidden = !show;
+      if (show) visibleUsers++;
+    });
+    const cardVisible = visibleUsers > 0 || (serverMatch && !topologyRiskOnly);
+    card.classList.toggle('nt-filter-hidden', !cardVisible);
+    const empty = card.querySelector('.nt-filter-empty');
+    if (empty) empty.hidden = visibleUsers > 0 || !cardVisible;
+    if (cardVisible) visibleCards++;
+  });
+  const globalEmpty = root.querySelector('.nt-global-empty');
+  if (globalEmpty) globalEmpty.hidden = visibleCards > 0;
 }
 
 function buildNetworkTopologyData() {
