@@ -426,20 +426,45 @@
 
         <!-- График активности -->
         <div class="panel-section chart-panel">
-          <div class="section-header">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <h3>Мониторинг активности</h3>
-              <span class="section-badge" id="chart-data-count">—</span>
-            </div>
-            <div class="section-actions">
-              <div class="window-switch compact">
-                <button class="active" onclick="setChartRange('6h', this)">6ч</button>
-                <button onclick="setChartRange('24h', this)">24ч</button>
-                <button onclick="setChartRange('7d', this)">7д</button>
+          <div class="chart-shell-head">
+            <div class="chart-title-block">
+              <div class="chart-title-row">
+                <h3>Мониторинг активности</h3>
+                <span class="section-badge" id="chart-data-count">—</span>
               </div>
+              <p id="activity-period-label">Онлайн, подозрительные и среднее за выбранный период</p>
+            </div>
+            <div class="window-switch compact chart-range-switch">
+              <button class="active" onclick="setChartRange('6h', this)">6ч</button>
+              <button onclick="setChartRange('24h', this)">24ч</button>
+              <button onclick="setChartRange('7d', this)">7д</button>
+            </div>
+          </div>
+          <div class="chart-insights">
+            <div class="chart-kpi chart-kpi-online">
+              <span>Сейчас онлайн</span>
+              <b id="activity-current">—</b>
+              <small id="activity-trend">ожидание данных</small>
+            </div>
+            <div class="chart-kpi">
+              <span>Пик периода</span>
+              <b id="activity-peak">—</b>
+              <small>максимум нагрузки</small>
+            </div>
+            <div class="chart-kpi">
+              <span>Среднее</span>
+              <b id="activity-average">—</b>
+              <small>базовая линия</small>
+            </div>
+            <div class="chart-kpi chart-kpi-risk">
+              <span>Риск</span>
+              <b id="activity-risk-peak">—</b>
+              <small id="activity-risk-state">нет сигналов</small>
             </div>
           </div>
           <div class="activity-chart-wrap">
+            <div class="chart-axis-caption chart-axis-caption-left">пользователи</div>
+            <div class="chart-axis-caption chart-axis-caption-right">риск</div>
             <div id="activity-chart"></div>
           </div>
           <div class="chart-legend">

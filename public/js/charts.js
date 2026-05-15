@@ -54,21 +54,25 @@ export function createActivityChartController({ getState } = {}) {
 
     if (!window.ApexCharts) {
       destroyChart();
+      updateActivitySummary(null, data.length, chartRange);
       container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:rgba(255,255,255,0.38);font:600 13px Inter,sans-serif;">ApexCharts не загружен</div>';
       return;
     }
 
     if (data.length < 2) {
       destroyChart();
+      updateActivitySummary(null, data.length, chartRange);
       const msg = history.length < 2
         ? 'Ожидание данных активности...'
         : 'Нет данных за выбранный период';
-      container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:280px;color:rgba(255,255,255,0.38);font:600 13px Inter,sans-serif;">${msg}</div>`;
+      container.innerHTML = `<div class="chart-empty-state">${msg}</div>`;
       return;
     }
 
     const theme = getChartTheme();
-    const options = buildApexOptions(data, theme, chartRange);
+    const summary = summarizeActivity(data, chartRange);
+    updateActivitySummary(summary, data.length, chartRange);
+    const options = buildApexOptions(data, theme, chartRange, summary);
 
     if (chart) {
       try {
@@ -100,7 +104,7 @@ export function createActivityChartController({ getState } = {}) {
   return { renderActivityChart, setChartRange, destroy };
 }
 
-function buildApexOptions(data, theme, range) {
+function buildApexOptions(data, theme, range, summary = summarizeActivity(data, range)) {
   // Downsample if too many points for smoother visual
   const step = data.length > 200 ? Math.ceil(data.length / 150) : 1;
   const sampled = step > 1 ? data.filter((_, i) => i % step === 0 || i === data.length - 1) : data;
@@ -114,9 +118,9 @@ function buildApexOptions(data, theme, range) {
   const onlineValues = smoothData(rawOnline, smoothWindow);
   const suspectValues = hasSuspects ? smoothData(rawSuspect, Math.max(3, smoothWindow - 1)) : rawSuspect;
 
-  const avgOnline = Math.round(data.reduce((s, p) => s + p.online, 0) / data.length);
-  const maxOnline = Math.max(1, ...data.map((p) => p.online));
-  const maxSuspects = Math.max(0, ...data.map((p) => p.suspects));
+  const avgOnline = summary.avgOnline;
+  const maxOnline = Math.max(1, summary.maxOnline);
+  const maxSuspects = summary.maxSuspects;
 
   const series = [
     { name: 'Онлайн', data: onlineValues },
@@ -128,8 +132,8 @@ function buildApexOptions(data, theme, range) {
   const yaxis = [
     {
       min: 0,
-      max: Math.ceil(maxOnline * 1.12),
-      tickAmount: 4,
+      max: Math.ceil(maxOnline * 1.16),
+      tickAmount: 5,
       labels: {
         style: {
           colors: theme.onlineLabel,
@@ -138,7 +142,7 @@ function buildApexOptions(data, theme, range) {
           fontWeight: 600,
         },
         formatter: (val) => Math.round(val),
-        offsetX: -4,
+        offsetX: -2,
       },
       axisBorder: { show: false },
       axisTicks: { show: false },
@@ -149,8 +153,8 @@ function buildApexOptions(data, theme, range) {
     yaxis.push({
       opposite: true,
       min: 0,
-      max: Math.max(2, Math.ceil(maxSuspects * 1.5)),
-      tickAmount: 3,
+      max: Math.max(2, Math.ceil(maxSuspects * 1.45)),
+      tickAmount: 4,
       labels: {
         style: {
           colors: theme.suspectLabel,
@@ -170,7 +174,7 @@ function buildApexOptions(data, theme, range) {
     series,
     chart: {
       type: 'area',
-      height: 310,
+      height: 342,
       fontFamily: 'Inter, sans-serif',
       background: 'transparent',
       foreColor: theme.textMuted,
@@ -180,17 +184,17 @@ function buildApexOptions(data, theme, range) {
       animations: {
         enabled: true,
         easing: 'easeinout',
-        speed: 900,
-        animateGradually: { enabled: true, delay: 80 },
-        dynamicAnimation: { enabled: true, speed: 500 },
+        speed: 720,
+        animateGradually: { enabled: true, delay: 45 },
+        dynamicAnimation: { enabled: true, speed: 360 },
       },
       dropShadow: {
         enabled: true,
-        enabledOnSeries: [0],
-        top: 6,
+        enabledOnSeries: hasSuspects ? [0, 1] : [0],
+        top: 8,
         left: 0,
-        blur: 20,
-        opacity: 0.35,
+        blur: 18,
+        opacity: 0.24,
         color: theme.online,
       },
     },
@@ -203,20 +207,20 @@ function buildApexOptions(data, theme, range) {
         type: 'vertical',
         shadeIntensity: 0,
         inverseColors: false,
-        opacityFrom: hasSuspects ? [0.55, 0.4] : [0.55],
-        opacityTo: hasSuspects ? [0.0, 0.0] : [0.0],
-        stops: [0, 95, 100],
+        opacityFrom: hasSuspects ? [0.46, 0.30] : [0.46],
+        opacityTo: hasSuspects ? [0.03, 0.00] : [0.03],
+        stops: [0, 72, 100],
       },
     },
     stroke: {
       curve: 'smooth',
-      width: hasSuspects ? [3.5, 2.5] : [3.5],
+      width: hasSuspects ? [4, 2.4] : [4],
       lineCap: 'round',
     },
     dataLabels: { enabled: false },
     markers: {
       size: 0,
-      hover: { sizeOffset: 6 },
+      hover: { size: 5, sizeOffset: 3 },
       strokeColors: theme.markerStroke,
       strokeWidth: 3,
     },
@@ -234,6 +238,7 @@ function buildApexOptions(data, theme, range) {
           hour: 'HH:mm',
           day: 'dd MMM',
         },
+        formatter: (value, timestamp) => formatAxisTime(value, timestamp, range),
         rotate: 0,
         maxHeight: 30,
       },
@@ -247,7 +252,7 @@ function buildApexOptions(data, theme, range) {
         stroke: {
           color: theme.crosshair,
           width: 1,
-          dashArray: 5,
+          dashArray: 4,
         },
         fill: {
           type: 'solid',
@@ -260,11 +265,11 @@ function buildApexOptions(data, theme, range) {
     grid: {
       show: true,
       borderColor: theme.grid,
-      strokeDashArray: 4,
+      strokeDashArray: 3,
       position: 'back',
       xaxis: { lines: { show: false } },
       yaxis: { lines: { show: true } },
-      padding: { left: 12, right: 12, top: 0, bottom: 0 },
+      padding: { left: 8, right: 14, top: 8, bottom: 0 },
     },
     legend: { show: false },
     tooltip: {
@@ -284,7 +289,7 @@ function buildApexOptions(data, theme, range) {
           if (val === undefined || val === null) return '';
           const v = Math.round(val);
           if (opts.seriesIndex === 0) return `<strong>${v}</strong> чел.`;
-          return `<strong>${v}</strong>`;
+          return `<strong>${v}</strong> подозр.`;
         },
       },
       marker: { show: true },
@@ -295,14 +300,14 @@ function buildApexOptions(data, theme, range) {
     annotations: {
       yaxis: [{
         y: avgOnline,
-        strokeDashArray: 8,
+        strokeDashArray: 5,
         borderColor: theme.avgLine,
-        borderWidth: 1.5,
+        borderWidth: 1.4,
         label: {
-          text: `среднее: ${avgOnline}`,
+          text: `среднее ${avgOnline}`,
           position: 'left',
-          offsetX: 10,
-          offsetY: -6,
+          offsetX: 14,
+          offsetY: -7,
           style: {
             color: theme.avgText,
             background: theme.avgBg,
@@ -316,15 +321,121 @@ function buildApexOptions(data, theme, range) {
           borderWidth: 0,
         },
       }],
+      points: [{
+        x: summary.peakPoint.ts,
+        y: summary.peakPoint.online,
+        marker: {
+          size: 5,
+          fillColor: theme.peakMarker,
+          strokeColor: theme.markerStroke,
+          strokeWidth: 3,
+          radius: 2,
+        },
+        label: {
+          borderColor: 'transparent',
+          offsetY: -10,
+          style: {
+            color: theme.peakText,
+            background: theme.peakBg,
+            fontSize: '10px',
+            fontFamily: 'JetBrains Mono, monospace',
+            fontWeight: 800,
+            padding: { left: 7, right: 7, top: 4, bottom: 4 },
+            borderRadius: 6,
+          },
+          text: `пик ${summary.maxOnline}`,
+        },
+      }],
     },
     responsive: [{
       breakpoint: 768,
       options: {
-        chart: { height: 220 },
+        chart: { height: 260 },
         stroke: { width: hasSuspects ? [2.5, 2] : [2.5] },
+        grid: { padding: { left: 0, right: 6, top: 4, bottom: 0 } },
       },
     }],
   };
+}
+
+function summarizeActivity(data, range) {
+  const latest = data[data.length - 1] || { online: 0, suspects: 0, ips: 0, ts: Date.now() };
+  const previous = data.length > 1 ? data[data.length - 2] : latest;
+  const maxOnline = Math.max(0, ...data.map((p) => p.online));
+  const minOnline = Math.min(...data.map((p) => p.online));
+  const maxSuspects = Math.max(0, ...data.map((p) => p.suspects));
+  const avgOnline = Math.round(data.reduce((s, p) => s + p.online, 0) / Math.max(data.length, 1));
+  const peakPoint = data.reduce((best, point) => point.online > best.online ? point : best, data[0]);
+  const delta = latest.online - previous.online;
+  const deltaPct = previous.online > 0 ? Math.round((delta / previous.online) * 100) : 0;
+  return {
+    range,
+    latest,
+    previous,
+    delta,
+    deltaPct,
+    maxOnline,
+    minOnline,
+    maxSuspects,
+    avgOnline,
+    peakPoint,
+  };
+}
+
+function updateActivitySummary(summary, count, range) {
+  const currentEl = document.getElementById('activity-current');
+  const peakEl = document.getElementById('activity-peak');
+  const avgEl = document.getElementById('activity-average');
+  const riskPeakEl = document.getElementById('activity-risk-peak');
+  const trendEl = document.getElementById('activity-trend');
+  const riskStateEl = document.getElementById('activity-risk-state');
+  const periodEl = document.getElementById('activity-period-label');
+
+  if (periodEl) {
+    const label = RANGE_LABELS[range] || RANGE_LABELS['6h'];
+    periodEl.textContent = count > 0
+      ? `Последние ${label}: онлайн, риск и базовая линия нагрузки`
+      : 'Онлайн, подозрительные и среднее за выбранный период';
+  }
+
+  if (!summary) {
+    if (currentEl) currentEl.textContent = '—';
+    if (peakEl) peakEl.textContent = '—';
+    if (avgEl) avgEl.textContent = '—';
+    if (riskPeakEl) riskPeakEl.textContent = '—';
+    if (trendEl) {
+      trendEl.textContent = count > 0 ? 'мало точек' : 'ожидание данных';
+      trendEl.className = '';
+    }
+    if (riskStateEl) riskStateEl.textContent = 'нет данных';
+    return;
+  }
+
+  if (currentEl) currentEl.textContent = String(summary.latest.online);
+  if (peakEl) peakEl.textContent = String(summary.maxOnline);
+  if (avgEl) avgEl.textContent = String(summary.avgOnline);
+  if (riskPeakEl) riskPeakEl.textContent = String(summary.maxSuspects);
+  if (trendEl) {
+    const sign = summary.delta > 0 ? '+' : '';
+    trendEl.textContent = summary.delta === 0
+      ? 'без изменений'
+      : `${sign}${summary.delta} к прошлой точке${summary.deltaPct ? ` (${sign}${summary.deltaPct}%)` : ''}`;
+    trendEl.className = summary.delta > 0 ? 'is-up' : summary.delta < 0 ? 'is-down' : '';
+  }
+  if (riskStateEl) {
+    riskStateEl.textContent = summary.maxSuspects > 0
+      ? `пик ${summary.maxSuspects}, сейчас ${summary.latest.suspects}`
+      : 'нет сигналов';
+  }
+}
+
+function formatAxisTime(value, timestamp, range) {
+  const date = new Date(timestamp ?? value);
+  if (!Number.isFinite(date.getTime())) return '';
+  if (range === '7d') {
+    return date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
+  }
+  return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
 function getChartTheme() {
