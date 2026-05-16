@@ -1559,16 +1559,41 @@ function renderNetworkTopologyMap() {
           ${IC._s('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>', 16)}
           <input id="nt-user-search" type="search" placeholder="Найти сервер, пользователя или ASN" oninput="filterTopologyUsers(this.value)">
         </label>
-        <button type="button" class="nt-tool-btn ${topologyRiskOnly ? 'active' : ''}" onclick="toggleTopologyRiskFilter(this)">Риск</button>
-        <button type="button" class="nt-tool-btn" onclick="setTopologyServersCollapsed(false)">Раскрыть</button>
-        <button type="button" class="nt-tool-btn" onclick="setTopologyServersCollapsed(true)">Свернуть</button>
+        <button type="button" class="nt-tool-btn nt-tool-risk ${topologyRiskOnly ? 'active' : ''}" onclick="toggleTopologyRiskFilter(this)">
+          ${IC._s('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-5"/>', 15)}
+          <span>Риск</span>
+        </button>
+        <button type="button" class="nt-tool-btn" onclick="setTopologyServersCollapsed(false)">
+          ${IC._s('<polyline points="6 9 12 15 18 9"/>', 15)}
+          <span>Раскрыть</span>
+        </button>
+        <button type="button" class="nt-tool-btn" onclick="setTopologyServersCollapsed(true)">
+          ${IC._s('<polyline points="18 15 12 9 6 15"/>', 15)}
+          <span>Свернуть</span>
+        </button>
       </div>
     </div>
     <div class="nt-users-summary">
-      <span><b>${topology.nodes.length}</b> серверов</span>
-      <span><b>${totalUsers}</b> пользователей</span>
-      <span><b>${totalIps}</b> IP</span>
-      <span class="${totalSuspects > 0 ? 'nt-summary-risk' : 'nt-summary-ok'}"><b>${totalSuspects}</b> риск</span>
+      <span class="nt-summary-card" style="--tone:#6366f1;--tone-rgb:99,102,241">
+        <i>${IC.server}</i>
+        <b>${topology.nodes.length}</b>
+        <small>серверов</small>
+      </span>
+      <span class="nt-summary-card" style="--tone:#0ea5e9;--tone-rgb:14,165,233">
+        <i>${IC.users}</i>
+        <b>${totalUsers}</b>
+        <small>пользователей</small>
+      </span>
+      <span class="nt-summary-card" style="--tone:#14b8a6;--tone-rgb:20,184,166">
+        <i>${IC.link}</i>
+        <b>${totalIps}</b>
+        <small>IP</small>
+      </span>
+      <span class="nt-summary-card ${totalSuspects > 0 ? 'nt-summary-risk' : 'nt-summary-ok'}" style="--tone:${totalSuspects > 0 ? '#f87171' : '#34d399'};--tone-rgb:${totalSuspects > 0 ? '248,113,113' : '52,211,153'}">
+        <i>${totalSuspects > 0 ? IC.warn : IC.shield}</i>
+        <b>${totalSuspects}</b>
+        <small>риск</small>
+      </span>
     </div>
     <div class="nt-server-list">`;
   topology.nodes.forEach((node, i) => {
@@ -1584,6 +1609,8 @@ function renderNetworkTopologyMap() {
     const riskClass = suspectHere > 0 ? ' nt-server-risk' : '';
     const serverSearch = `${node.name} ${node.userCount} ${node.ipCount} ${nodeUserList.map(u => `${u.name} ${u.asnKey || ''} ${u.asnTitle || ''}`).join(' ')}`.toLowerCase();
     const statusText = suspectHere > 0 ? `${suspectHere} под проверкой` : (i === 0 ? 'максимальная нагрузка' : 'без тревог');
+    const statusClass = suspectHere > 0 ? 'is-risk' : (i === 0 ? 'is-peak' : 'is-clean');
+    const hiddenUsers = Math.max(0, nodeUserList.length - 4);
 
     html += `<article class="nt-server-card${riskClass}" data-server-search="${escAttr(serverSearch)}" style="--tone:${color}">
       <button type="button" class="nt-server-head" aria-expanded="true" onclick="toggleTopologyServerCard(this)">
@@ -1591,7 +1618,7 @@ function renderNetworkTopologyMap() {
         <div class="nt-server-main">
           <div class="nt-server-title-row">
             <h5 title="${escAttr(node.name)}">${esc(shortTopologyLabel(node.name, 34))}</h5>
-            <span class="nt-server-status">${esc(statusText)}</span>
+            <span class="nt-server-status ${statusClass}">${esc(statusText)}</span>
           </div>
           <div class="nt-server-load" title="${node.userCount} пользователей из ${totalUsers}">
             <span style="width:${nodePct}%"></span>
@@ -1619,9 +1646,10 @@ function renderNetworkTopologyMap() {
         <div class="nt-user-list">
           ${nodeUserList.length > 0 ? nodeUserList.map(u => {
             const userSearch = `${u.name} ${u.key} ${u.asnKey || ''} ${u.asnTitle || ''}`.toLowerCase();
+            const userTone = u.isSuspect ? '#ef4444' : color;
             return `<button type="button" class="nt-user-row ${u.isSuspect ? 'is-risk' : ''}" data-risk="${u.isSuspect ? '1' : '0'}" data-search="${escAttr(userSearch)}" onclick="openUserCard('${escAttr(u.key)}')" title="${escAttr(u.asnTitle || u.name)}">
             <span class="nt-user-main">
-              <span class="nt-user-dot" style="background:${u.isSuspect ? '#ef4444' : color}"></span>
+              <span class="nt-user-dot" style="--dot:${userTone}"></span>
               <span class="nt-user-copy">
                 <b>${esc(shortTopologyLabel(u.name, 28))}</b>
                 <small>${u.isSuspect ? 'подозрительная активность' : esc(shortTopologyLabel(u.key, 30))}</small>
@@ -1633,6 +1661,7 @@ function renderNetworkTopologyMap() {
           }).join('') : '<div class="nt-node-empty">Нет активных пользователей</div>'}
           <div class="nt-filter-empty" hidden>Ничего не найдено в этом сервере</div>
         </div>
+        ${hiddenUsers > 0 ? `<div class="nt-user-overflow-note">+${hiddenUsers} пользователей в списке</div>` : ''}
       </div>
     </article>`;
   });
